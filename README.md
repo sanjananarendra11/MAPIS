@@ -1,264 +1,428 @@
-# MAIPS – Multilayer Adaptive Intelligent Phishing System
+# MAPIS - Multilayer Adaptive Phishing Intelligence System
 
-## Project Overview
+MAPIS is a full-stack phishing detection platform that analyzes URLs and emails, shows live dashboard analytics, and warns users through a Chrome Extension when a suspicious or phishing website is opened.
 
-MAIPS (Multilayer Adaptive Intelligent Phishing System) is an intelligent browser-based phishing detection system designed to identify phishing websites using a multi-layer security architecture.
+The project combines:
 
-Unlike traditional phishing detectors that only classify websites as Safe or Phishing, MAIPS performs:
+- React cybersecurity dashboard
+- Flask ML and analysis API
+- Random Forest phishing model
+- Chrome Extension Manifest V3
+- Real-time scan history, alerts, and risk scoring
+- Admin login and blacklist management
 
-- URL-based Analysis
-- Machine Learning Prediction
-- Content Behavior Analysis
-- Threat Intent Reasoning
-- Explainable AI Detection
-- Final Security Verdict Generation
-- Real-time Browser Extension Scanning
+## Current Status
 
-This makes MAIPS a stronger and more practical cybersecurity solution for real-world phishing detection.
+The system is working with:
 
----
+- URL scanning
+- Email scanning
+- Dashboard analytics
+- Real-time alerts
+- Chrome Extension background scanning
+- Automatic suspicious-site warning popup
+- Admin login
+- Blacklist add/delete
+- Model Performance dashboard
+- Guarded model retraining
 
-# Problem Statement
+The backend runs on port `5001` because macOS may already use port `5000`.
 
-Traditional phishing detection systems rely only on basic blacklist checking or simple URL matching, which often fails against modern adaptive phishing attacks.
+## Tech Stack
 
-Phishing attackers now use:
+### Frontend
 
-- fake login pages
-- brand impersonation
-- credential harvesting forms
-- malicious redirects
-- account verification scams
+- React
+- Tailwind-style custom CSS
+- Recharts
+- Framer Motion
+- Lucide React Icons
+- React Toastify
 
-To solve this, MAIPS introduces a multi-layer intelligent phishing detection system that combines rule-based analysis, machine learning, content inspection, and explainable AI for better accuracy and trust.
-
----
-
-# Project Architecture
-
-## Layer 1 – URL Analysis
-
-### Features Implemented
-
-- URL Length Detection
-- IP Address Detection
-- HTTPS Verification
-- Suspicious Keyword Detection
-- Dot Count Analysis
-- Double Slash Detection
-- Subdomain Depth Analysis
-- Entropy Calculation
-- Hyphen Detection
-- @ Symbol Detection
-- Brand Spoof Detection
-
-### Purpose
-
-Detect suspicious URL patterns before the page is fully trusted.
-
-### Output
-
-- Risk Score
-- Circular Risk Meter
-- URL Suspicion Indicators
-
----
-
-## Layer 2 – Machine Learning Analysis
-
-### Features Implemented
-
-- Logistic Regression Model
-- StandardScaler Integration
-- Large Dataset Training
-- Confidence Score Generation
-- Hybrid Weighted Scoring
-- Explainable Feature Contributions
-
-### Purpose
-
-Predict phishing probability intelligently using trained ML models.
-
-### Output
-
-- Safe / Phishing Prediction
-- ML Confidence Score
-- Circular Confidence Meter
-- Feature Contribution Graphs
-
----
-
-## Layer 3 – Content Analysis + Intent Reasoning
-
-### Features Implemented
-
-- Password Field Detection
-- Form Detection
-- External Form Action Detection
-- Redirect Script Detection
-- Suspicious Word Detection
-- Known Brand Detection
-- Threat Type Identification
-- Severity Classification
-- Explainable AI (“Why Flagged”)
-
-### Threat Types
-
-- Credential Harvesting
-- Account Verification Scam
-- Financial Phishing
-- Malware / Redirect Attack
-- Suspicious Phishing Attempt
-- Safe Browsing
-
-### Output
-
-- Threat Type
-- Severity Level
-- Circular Severity Meter
-- Why Flagged Section
-- Graph Visualizations
-
----
-
-## Final Security Verdict
-
-### Final Decision Layer
-
-Combines results from:
-
-- Layer 1
-- Layer 2
-- Layer 3
-
-to produce one final decision for the user.
-
-### Output Includes
-
-- SAFE WEBSITE / PHISHING DETECTED
-- Final Confidence Score
-- Threat Level
-- Main Reason
-- Final Circular Meter
-- Final Summary Graph
-
-This improves usability, explainability, and trust.
-
----
-
-# Browser Extension
-
-## Features
-
-- Chrome Extension Integration
-- Real-time Current Tab Scanning
-- Automatic URL Detection
-- Content Script Communication
-- Flask Backend API Integration
-- Premium Dashboard UI
-- Live Phishing Detection
-- Explainable Security Results
-
----
-
-# UI Features
-
-## Premium Dashboard
-
-### Circular Meters Added For
-
-- Layer 1 → Risk Score
-- Layer 2 → ML Confidence
-- Layer 3 → Threat Severity
-- Final Security Verdict → Final Confidence
-
-### Graph Visualizations Added For
-
-- Feature Contributions
-- Content Analysis Signals
-- Final Threat Summary
-
-### Visual Design
-
-- Pink / Blue / Purple Gradients
-- Animated Glowing Bars
-- Professional Dark Security Dashboard
-- Premium Extension Styling
-
-This makes the project look like a real cybersecurity product.
-
----
-
-# Explainable AI
-
-Instead of only showing:
-
-Safe / Phishing
-
-MAIPS explains:
-
-## Why Flagged
-
-Examples:
-
-- Fake login page detected
-- Password field found on suspicious domain
-- Brand impersonation detected
-- Suspicious urgency language detected
-- External suspicious form action found
-
-This improves transparency and user trust.
-
----
-
-# Technologies Used
-
-## Frontend
-
-- HTML
-- CSS
-- JavaScript
-
-## Backend
+### Backend and ML API
 
 - Python
 - Flask
 - Flask-CORS
-
-## Machine Learning
-
-- Scikit-learn
 - Pandas
 - NumPy
-- Logistic Regression
+- Scikit-learn
+- Random Forest Classifier
 - StandardScaler
 
-## Browser Extension
+### Browser Extension
 
 - Chrome Extension Manifest V3
+- Background service worker
+- Content script
+- Popup UI
 
----
+## Main Features
 
-# Project Structure
+### 1. URL Phishing Detection
+
+MAPIS analyzes:
+
+- HTTPS usage
+- URL length
+- IP address usage
+- Dot count
+- Hyphens
+- Subdomain depth
+- Suspicious keywords
+- Double slash attacks
+- URL entropy
+- Brand spoofing
+- Page content signals from the extension
+
+Output:
+
+- Safe
+- Suspicious
+- Phishing
+- Risk score
+- Threat type
+- Explanations
+
+### 2. Email Phishing Detection
+
+MAPIS analyzes:
+
+- Sender address
+- Sender domain pattern
+- SPF
+- DKIM
+- DMARC
+- Subject
+- Email body
+- Suspicious terms
+- Urgency language
+- Embedded links
+
+### 3. Five Detection Layers
+
+The dashboard uses these layers:
+
+1. URL Analysis - Detects suspicious URL patterns and domain characteristics.
+2. ML Analysis - Uses a Random Forest model to classify websites from extracted URL features.
+3. Website Behavior Analysis - Examines webpage structure and form actions.
+4. Content Analysis - Uses NLP-style checks for suspicious message or email content.
+5. Sender Reputation Analysis - Evaluates domain and IP reputation signals.
+
+### 4. Real-Time Alerts
+
+When a phishing or suspicious result is found:
+
+- An alert is added to the dashboard.
+- The Chrome Extension warning popup appears on the website.
+- The dashboard counters and charts update from real scan records.
+
+### 5. Chrome Extension Warning Popup
+
+When a user opens a risky website, the extension:
+
+1. Reads the current tab URL.
+2. Extracts page content signals.
+3. Sends the URL and page signals to the Flask API.
+4. Receives a canonical scan result.
+5. Shows a MAPIS warning overlay with the same risk score used by the dashboard.
+
+The extension now canonicalizes URLs, so these score the same:
 
 ```text
-MAIPS/
-│
+https://br-icloud.com.br
+https://br-icloud.com.br/
+```
+
+### 6. Model Performance and Learning Guard
+
+The Random Forest model is evaluated from the saved model and dataset.
+
+Current verified metrics:
+
+```text
+Accuracy: 87.52%
+Precision: 75.22%
+Recall: 45.87%
+F1 Score: 56.99%
+```
+
+The retraining script includes a Learning Guard:
+
+- A candidate model is trained.
+- The old and new models are tested on the same held-out split.
+- The candidate is promoted only if held-out accuracy is not lower than the current model.
+- Previous model and scaler files are backed up before promotion.
+
+This prevents the displayed accuracy from decreasing after retraining.
+
+## Project Structure
+
+```text
+MAIPS_copy/
 ├── backend/
 │   ├── app.py
-│   ├── dataset.csv
 │   ├── feature_extractor.py
-│   ├── generate_dataset.py
-│   └── check_labels.py
+│   ├── train_model.py
+│   ├── test_api.py
+│   ├── dataset.csv
+│   ├── raw_urls.csv
+│   ├── model.pkl
+│   ├── scaler.pkl
+│   └── model_metadata.json
+│
+├── frontend/
+│   ├── public/
+│   ├── src/
+│   │   ├── App.js
+│   │   └── App.css
+│   ├── package.json
+│   └── package-lock.json
 │
 ├── extension/
 │   ├── manifest.json
+│   ├── background.js
+│   ├── content.js
 │   ├── popup.html
 │   ├── popup.css
 │   ├── popup.js
-│   ├── content.js
-│   └── background.js
+│   └── icon.png
 │
-├── progress.md
-├── README.md
-└── requirements.txt
+└── README.md
+```
+
+## Setup Instructions
+
+### 1. Open Project
+
+```bash
+cd /Users/sanjanan/MAIPS_copy
+code .
+```
+
+### 2. Backend Setup
+
+Use the existing backend virtual environment if it is already present:
+
+```bash
+cd backend
+source venv/bin/activate
+python app.py
+```
+
+If a fresh virtual environment is needed:
+
+```bash
+cd backend
+python3 -m venv venv
+source venv/bin/activate
+pip install flask flask-cors pandas numpy scikit-learn
+python app.py
+```
+
+Backend URL:
+
+```text
+http://127.0.0.1:5001
+```
+
+Health check:
+
+```bash
+curl http://127.0.0.1:5001/api/dashboard
+```
+
+### 3. Frontend Setup
+
+Open a second terminal:
+
+```bash
+cd frontend
+npm install
+npm start
+```
+
+Frontend URL:
+
+```text
+http://localhost:3000
+```
+
+### 4. Chrome Extension Setup
+
+1. Open Chrome.
+2. Go to:
+
+```text
+chrome://extensions
+```
+
+3. Enable Developer mode.
+4. Click Load unpacked.
+5. Select:
+
+```text
+/Users/sanjanan/MAIPS_copy/extension
+```
+
+6. Keep the Flask backend running on:
+
+```text
+http://127.0.0.1:5001
+```
+
+After changing extension files, click Reload on the extension card in `chrome://extensions`.
+
+## Admin Login
+
+Default development admin credentials:
+
+```text
+Email: admin@mapis.local
+Password: Admin@123
+```
+
+These can be overridden using environment variables:
+
+```bash
+export MAPIS_ADMIN_EMAIL="your-admin@example.com"
+export MAPIS_ADMIN_PASSWORD="YourStrongPassword"
+```
+
+## Common Commands
+
+### Run Backend
+
+```bash
+cd backend
+source venv/bin/activate
+python app.py
+```
+
+### Run Frontend
+
+```bash
+cd frontend
+npm start
+```
+
+### Build Frontend
+
+```bash
+cd frontend
+npm run build
+```
+
+### Check Backend Syntax
+
+```bash
+cd backend
+python -m py_compile app.py feature_extractor.py train_model.py test_api.py
+```
+
+### Check Extension Syntax
+
+```bash
+cd extension
+node --check background.js
+node --check content.js
+node --check popup.js
+```
+
+### Retrain ML Model With Guard
+
+```bash
+cd backend
+source venv/bin/activate
+python train_model.py
+```
+
+The script writes:
+
+```text
+backend/model_metadata.json
+backend/model.previous.pkl
+backend/scaler.previous.pkl
+```
+
+It promotes the new model only when held-out accuracy is not lower.
+
+## API Endpoints
+
+### Dashboard
+
+```http
+GET /api/dashboard
+```
+
+### Model Metrics
+
+```http
+GET /api/model/metrics
+```
+
+### URL Scan
+
+```http
+POST /api/scan/url
+```
+
+Example body:
+
+```json
+{
+  "url": "https://br-icloud.com.br"
+}
+```
+
+### Latest URL Result
+
+```http
+GET /api/scan/latest?url=https://br-icloud.com.br
+```
+
+### Email Scan
+
+```http
+POST /api/scan/email
+```
+
+Example body:
+
+```json
+{
+  "sender": "security@verify-account-login.xyz",
+  "subject": "Urgent account verification required",
+  "body": "Your account is suspended. Verify your password immediately.",
+  "headers": "spf=fail; dkim=fail; dmarc=fail"
+}
+```
+
+### Alerts
+
+```http
+GET /api/alerts
+POST /api/alerts
+```
+
+### Blacklist
+
+```http
+GET /api/blacklist
+POST /api/blacklist/add
+DELETE /api/blacklist/:id
+```
+
+Blacklist add/delete requires admin authentication.
+
+## Important Notes
+
+- Dashboard numbers are based on real scan records, not fake static values.
+- Development scan history is in memory, so it resets when the backend restarts.
+- The Chrome Extension and dashboard both use backend port `5001`.
+- If the warning popup score looks old, reload the extension in `chrome://extensions`.
+- The ML model accuracy can improve after retraining, but the Learning Guard prevents promoting a lower-accuracy model.
+
+## Resume Description
+
+Built MAPIS, a full-stack phishing intelligence platform with URL and email analysis, Random Forest ML prediction, explainable risk scoring, live security dashboard, admin blacklist management, and Chrome Extension based real-time phishing warnings.

@@ -1,25 +1,34 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>PhishGuard</title>
+  <title>MAPIS</title>
   <link rel="stylesheet" href="popup.css">
 </head>
 <body>
+  <main class="container">
+    <header class="brand">
+      <div class="shield">M</div>
+      <div>
+        <h1>MAPIS</h1>
+        <p>Adaptive phishing intelligence</p>
+      </div>
+    </header>
 
-<div class="container">
+    <section class="url-box">
+      <span>Current page</span>
+      <p id="current-url">Loading URL...</p>
+    </section>
 
-  <h1>PhishGuard</h1>
+    <div class="actions">
+      <button id="scanBtn">Scan Current Website</button>
+      <button id="dashboardBtn" class="secondary">Open Dashboard</button>
+    </div>
 
-  <div class="url-box">
-    <p id="current-url">Loading URL...</p>
-  </div>
+    <section id="result" class="result-empty">
+      <p>Run a scan to see risk score, layers, and verdict.</p>
+    </section>
+  </main>
 
-  <button id="scanBtn">Scan Current Website</button>
-
-  <div id="result"></div>
-
-</div>
-
-<script src="popup.js"></script>
+  <script src="popup.js"></script>
 </body>
 </html>

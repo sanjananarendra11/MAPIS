@@ -1,66 +1,168 @@
+const API_BASE = "http://127.0.0.1:5001";
 let currentTabUrl = "";
 
-// Get current active tab URL
-chrome.tabs.query(
-  { active: true, currentWindow: true },
-  function (tabs) {
-    if (tabs.length > 0) {
-      currentTabUrl = tabs[0].url || "";
-      document.getElementById("current-url").innerText = currentTabUrl;
+function canonicalUrl(url) {
+  try {
+    const parsed = new URL(url);
+    parsed.hash = "";
+    if (parsed.pathname === "/") {
+      parsed.pathname = "";
     }
+    return parsed.toString().replace(/\/$/, "");
+  } catch (error) {
+    return url || "";
   }
-);
+}
 
-// Scan button click
-document.getElementById("scanBtn").addEventListener("click", async () => {
+function escapeHTML(value) {
+  return String(value || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function riskTone(score) {
+  if (score >= 80) return "danger";
+  if (score >= 40) return "warning";
+  return "safe";
+}
+
+function verdictText(data) {
+  return data.prediction === "Safe" ? "SAFE WEBSITE" : "PHISHING DETECTED";
+}
+
+function renderResult(data) {
   const resultDiv = document.getElementById("result");
+  const score = Number(data.risk_score || 0);
+  const tone = riskTone(score);
+  const explanations = data.layer3?.explanations || [];
+  const contributions = data.layer2?.contributions || [];
 
+  resultDiv.className = `result-card ${tone}`;
   resultDiv.innerHTML = `
-    <div class="loading">
-      Scanning website...
+    <div class="verdict-row">
+      <div
+        class="risk-ring"
+        style="background: conic-gradient(var(--meter) ${score * 3.6}deg, rgba(148,163,184,0.14) 0deg);"
+      >
+        <div>
+          <strong>${score}%</strong>
+          <span>risk</span>
+        </div>
+      </div>
+      <div>
+        <span class="eyebrow">Final verdict</span>
+        <h2>${escapeHTML(verdictText(data))}</h2>
+        <p>${escapeHTML(data.layer3?.threat_type || "Safe Browsing")}</p>
+      </div>
+    </div>
+
+    <div class="layer-grid">
+      <div>
+        <span>URL Layer</span>
+        <strong>${escapeHTML(data.prediction || "Safe")}</strong>
+      </div>
+      <div>
+        <span>ML Confidence</span>
+        <strong>${escapeHTML(data.layer2?.confidence || 0)}%</strong>
+      </div>
+      <div>
+        <span>Severity</span>
+        <strong>${escapeHTML(data.layer3?.severity || "Low")}</strong>
+      </div>
+    </div>
+
+    <h3>Why flagged</h3>
+    <ul>
+      ${
+        explanations.length > 0
+          ? explanations.slice(0, 4).map((item) => `<li>${escapeHTML(item)}</li>`).join("")
+          : "<li>No strong phishing indicators detected</li>"
+      }
+    </ul>
+
+    <h3>Top risk factors</h3>
+    <div class="factor-list">
+      ${
+        contributions
+          .filter((item) => Number(String(item.impact || "0").replace("+", "")) > 0)
+          .slice(0, 4)
+          .map((item) => {
+            const impact = Number(String(item.impact || "0").replace("+", ""));
+            return `
+              <div class="factor">
+                <span>${escapeHTML(item.name)}</span>
+                <b>${escapeHTML(item.impact)}</b>
+                <i style="width: ${Math.min(impact * 2, 100)}%"></i>
+              </div>
+            `;
+          })
+          .join("") || "<p class='safe-note'>No major risk factors detected</p>"
+      }
     </div>
   `;
+}
+
+async function getActiveTab() {
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    currentWindow: true
+  });
+  return tab;
+}
+
+async function getPageContent(tabId) {
+  const fallback = {
+    hasPasswordField: false,
+    formCount: 0,
+    suspiciousWords: 0,
+    hasExternalFormAction: false,
+    hasRedirectScript: false,
+    detectedBrands: []
+  };
 
   try {
-    const [tab] = await chrome.tabs.query({
-      active: true,
-      currentWindow: true
+    const response = await chrome.tabs.sendMessage(tabId, {
+      action: "getPageContent"
+    });
+    return response || fallback;
+  } catch (err) {
+    return fallback;
+  }
+}
+
+async function loadCurrentTab() {
+  const tab = await getActiveTab();
+  currentTabUrl = canonicalUrl(tab?.url || "");
+  document.getElementById("current-url").innerText = currentTabUrl || "No active tab";
+
+  try {
+    const cached = await chrome.runtime.sendMessage({
+      action: "getLatestResult",
+      url: currentTabUrl
     });
 
-    let pageContent = {
-      hasPasswordField: false,
-      formCount: 0,
-      suspiciousWords: 0,
-      hasExternalFormAction: false,
-      hasRedirectScript: false,
-      detectedBrands: []
-    };
-
-    // =========================================
-    // Get content.js data safely
-    // =========================================
-
-    try {
-      const responseFromContent = await chrome.tabs.sendMessage(
-        tab.id,
-        {
-          action: "getPageContent"
-        }
-      );
-
-      if (responseFromContent) {
-        pageContent = responseFromContent;
-      }
-
-    } catch (err) {
-      console.log("Content script unavailable:", err);
+    if (cached?.result) {
+      renderResult(cached.result);
     }
+  } catch (error) {
+    // The popup can still run an explicit scan if no cached result is available.
+  }
+}
 
-    // =========================================
-    // Backend API Call
-    // =========================================
+async function scanCurrentWebsite() {
+  const resultDiv = document.getElementById("result");
+  resultDiv.className = "result-empty";
+  resultDiv.innerHTML = "<p>Scanning URL, ML model, content, and blacklist layers...</p>";
 
-    const response = await fetch("http://127.0.0.1:5000/predict", {
+  try {
+    const tab = await getActiveTab();
+    currentTabUrl = canonicalUrl(tab?.url || currentTabUrl);
+    const pageContent = await getPageContent(tab.id);
+
+    const response = await fetch(`${API_BASE}/api/scan/url`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json"
@@ -73,302 +175,26 @@ document.getElementById("scanBtn").addEventListener("click", async () => {
 
     const data = await response.json();
 
-    console.log("FULL API RESPONSE:", data);
-
-    if (data.error) {
-      resultDiv.innerHTML = `
-        <div class="error-box">
-          ${data.error}
-        </div>
-      `;
-      return;
+    if (!response.ok || data.error) {
+      throw new Error(data.error || "Scan failed");
     }
 
-    // Safe fallback objects
-    const layer1 = data.layer1 || {};
-    const layer2 = data.layer2 || {
-      confidence: 0,
-      contributions: []
-    };
-    const layer3 = data.layer3 || {
-      threat_type: "Safe Browsing",
-      severity: "Low",
-      explanations: []
-    };
-
-    // =========================================
-    // Layer 1 HTML
-    // =========================================
-
-    let layer1HTML = "";
-
-    Object.entries(layer1).forEach(([key, value]) => {
-      layer1HTML += `
-        <div class="row">
-          <span>${key}</span>
-          <span>${value}</span>
-        </div>
-      `;
-    });
-
-    const riskMeterHTML = `
-      <div class="risk-meter">
-        <div
-          class="circle"
-          style="
-            background: conic-gradient(
-              #ff4fd8 ${(data.risk_score || 0) * 3.6}deg,
-              rgba(255,255,255,0.08) 0deg
-            );
-          "
-        >
-          <div class="inner-circle">
-            ${data.risk_score || 0}%
-          </div>
-        </div>
-
-        <div class="risk-label">
-          ${
-            (data.risk_score || 0) >= 80
-              ? "CRITICAL RISK"
-              : (data.risk_score || 0) >= 60
-              ? "HIGH RISK"
-              : (data.risk_score || 0) >= 30
-              ? "MEDIUM RISK"
-              : "LOW RISK"
-          }
-        </div>
-      </div>
-    `;
-
-    // =========================================
-    // Layer 2 HTML
-    // =========================================
-
-    const layer2MeterHTML = `
-      <div class="risk-meter">
-        <div
-          class="circle"
-          style="
-            background: conic-gradient(
-              #00e5ff ${(layer2.confidence || 0) * 3.6}deg,
-              rgba(255,255,255,0.08) 0deg
-            );
-          "
-        >
-          <div class="inner-circle">
-            ${layer2.confidence || 0}%
-          </div>
-        </div>
-
-        <div class="risk-label">
-          ML CONFIDENCE
-        </div>
-      </div>
-    `;
-
-    let contributionHTML = "";
-
-    if ((layer2.contributions || []).length === 0) {
-      contributionHTML = `
-        <p class="safe-note">
-          No major risk factors detected
-        </p>
-      `;
-    } else {
-      layer2.contributions.forEach(item => {
-        const score = parseInt(
-          (item.impact || "+0").replace("+", "")
-        );
-
-        contributionHTML += `
-          <div class="contribution-box">
-            <div class="contribution-top">
-              <span class="feature-name">${item.name}</span>
-              <span class="feature-score">${item.impact}</span>
-            </div>
-
-            <div class="bar-bg">
-              <div
-                class="bar-fill"
-                style="width: ${Math.min(score * 2, 100)}%;">
-              </div>
-            </div>
-          </div>
-        `;
-      });
-    }
-
-    // =========================================
-    // Layer 3 HTML
-    // =========================================
-
-    const layer3MeterHTML = `
-      <div class="risk-meter">
-        <div
-          class="circle"
-          style="
-            background: conic-gradient(
-              #ff4fd8 ${
-                layer3.severity === "High"
-                  ? 300
-                  : layer3.severity === "Medium"
-                  ? 220
-                  : 120
-              }deg,
-              rgba(255,255,255,0.08) 0deg
-            );
-          "
-        >
-          <div class="inner-circle">
-            ${layer3.severity || "Low"}
-          </div>
-        </div>
-
-        <div class="risk-label">
-          THREAT SEVERITY
-        </div>
-      </div>
-    `;
-
-    let explanationHTML = "";
-
-    if ((layer3.explanations || []).length === 0) {
-      explanationHTML = `
-        <p class="safe-note">
-          No strong phishing indicators detected
-        </p>
-      `;
-    } else {
-      layer3.explanations.forEach(item => {
-        explanationHTML += `
-          <div class="contribution">
-            <span>- ${item}</span>
-          </div>
-        `;
-      });
-    }
-
-    // =========================================
-    // Final UI
-    // =========================================
-
-    resultDiv.innerHTML = `
-      <div class="dashboard">
-
-        <!-- Layer 1 -->
-        <div class="panel">
-          <h2>Layer 1 - URL Analysis</h2>
-          ${riskMeterHTML}
-          ${layer1HTML}
-        </div>
-
-        <!-- Layer 2 -->
-        <div class="panel">
-          <h2>Layer 2 - ML Analysis</h2>
-
-          <div class="prediction ${
-            data.prediction === "Safe" ? "safe" : "phishing"
-          }">
-            ${data.prediction || "Safe"}
-          </div>
-
-          ${layer2MeterHTML}
-
-          <h3>Feature Contributions</h3>
-          ${contributionHTML}
-        </div>
-
-        <!-- Layer 3 -->
-        <div class="panel">
-          <h2>Layer 3 - Content Analysis + Intent Reasoning</h2>
-
-          <div class="prediction ${
-            data.prediction === "Safe" ? "safe" : "phishing"
-          }">
-            ${layer3.threat_type || "Safe Browsing"}
-          </div>
-
-          ${layer3MeterHTML}
-
-          <h3>Why Flagged</h3>
-          ${explanationHTML}
-        </div>
-
-        <!-- Final Verdict -->
-        <div class="panel final-verdict">
-          <h2>Final Security Verdict</h2>
-
-          <div class="prediction ${
-            data.prediction === "Safe" ? "safe" : "phishing"
-          }">
-            ${
-              data.prediction === "Safe"
-                ? "SAFE WEBSITE"
-                : "PHISHING DETECTED"
-            }
-          </div>
-
-          <div class="risk-meter">
-            <div
-              class="circle"
-              style="
-                background: conic-gradient(
-                  ${
-                    data.prediction === "Safe"
-                      ? "#00ff9d"
-                      : "#ff4fd8"
-                  } ${(data.risk_score || 0) * 3.6}deg,
-                  rgba(255,255,255,0.08) 0deg
-                );
-              "
-            >
-              <div class="inner-circle">
-                ${layer2.confidence || 0}%
-              </div>
-            </div>
-
-            <div class="risk-label">
-              FINAL CONFIDENCE
-            </div>
-          </div>
-
-          <div class="confidence">
-            Threat Level:
-            ${
-              (data.risk_score || 0) >= 80
-                ? "CRITICAL"
-                : (data.risk_score || 0) >= 60
-                ? "HIGH"
-                : (data.risk_score || 0) >= 30
-                ? "MEDIUM"
-                : "LOW"
-            }
-          </div>
-
-          <h3>Main Reason</h3>
-
-          <div class="contribution">
-            <span>
-              ${
-                (layer3.explanations || []).length > 0
-                  ? layer3.explanations[0]
-                  : "No major suspicious indicators detected"
-              }
-            </span>
-          </div>
-        </div>
-
-      </div>
-    `;
-
+    renderResult(data);
   } catch (error) {
-    console.error(error);
-
+    resultDiv.className = "error-box";
     resultDiv.innerHTML = `
-      <div class="error-box">
-        Backend connection failed
-      </div>
+      <strong>Backend connection failed</strong>
+      <span>${escapeHTML(error.message)}</span>
     `;
   }
+}
+
+document.getElementById("scanBtn").addEventListener("click", scanCurrentWebsite);
+
+document.getElementById("dashboardBtn").addEventListener("click", () => {
+  chrome.tabs.create({
+    url: "http://localhost:3000"
+  });
 });
+
+loadCurrentTab();
