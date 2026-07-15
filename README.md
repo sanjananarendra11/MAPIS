@@ -143,8 +143,6 @@ Current verified metrics:
 ```text
 Accuracy: 87.52%
 Precision: 75.22%
-Recall: 45.87%
-F1 Score: 56.99%
 ```
 
 The retraining script includes a Learning Guard:
