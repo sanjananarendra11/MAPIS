@@ -159,7 +159,7 @@ This prevents the displayed accuracy from decreasing after retraining.
 ## Project Structure
 
 ```text
-MAIPS_copy/
+MAIPS/
 ├── backend/
 │   ├── app.py
 │   ├── feature_extractor.py
@@ -196,7 +196,7 @@ MAIPS_copy/
 ### 1. Open Project
 
 ```bash
-cd /Users/sanjanan/MAIPS_copy
+cd /Users/sanjanan/MAIPS
 code .
 ```
 
@@ -262,7 +262,7 @@ chrome://extensions
 5. Select:
 
 ```text
-/Users/sanjanan/MAIPS_copy/extension
+/Users/sanjanan/MAIPS/extension
 ```
 
 6. Keep the Flask backend running on:
