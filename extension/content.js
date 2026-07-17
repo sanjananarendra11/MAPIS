@@ -115,7 +115,7 @@ function showMapisWarning(payload) {
 
   const score = Number(payload.risk_score || 0);
   const severity = String(payload.layer3?.severity || (score >= 80 ? "High" : "Medium")).toLowerCase();
-  const isHighRisk = score >= 70 || payload.prediction === "Phishing";
+  const isHighRisk = score >= 70 || payload.prediction === "Dangerous";
   const reasons = (payload.layer3?.explanations || [])
     .filter(Boolean)
     .slice(0, 3)
@@ -157,7 +157,7 @@ function showMapisWarning(payload) {
 
   const title = document.createElement("h2");
   title.textContent = isHighRisk
-    ? "High-risk phishing page detected"
+    ? "Dangerous phishing page detected"
     : "Suspicious phishing signals detected";
   title.style.cssText = `
     margin: 0 0 10px;
@@ -222,6 +222,31 @@ function showMapisWarning(payload) {
   overlay.appendChild(card);
   document.documentElement.appendChild(overlay);
 }
+
+window.addEventListener("message", (event) => {
+  if (event.source !== window) {
+    return;
+  }
+
+  const message = event.data || {};
+
+  if (message.source !== "MAPIS_DASHBOARD") {
+    return;
+  }
+
+  if (message.type === "MAPIS_AUTH_TOKEN") {
+    chrome.runtime.sendMessage({
+      action: "setAuthToken",
+      token: message.token || ""
+    });
+  }
+
+  if (message.type === "MAPIS_CLEAR_AUTH_TOKEN") {
+    chrome.runtime.sendMessage({
+      action: "clearAuthToken"
+    });
+  }
+});
 
 chrome.runtime.onMessage.addListener(
   function (request, sender, sendResponse) {

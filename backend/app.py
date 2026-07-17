@@ -5,9 +5,11 @@ import json
 import pandas as pd
 from feature_extractor import extract_features
 import os
+import hashlib
 import hmac
 import secrets
 import re
+import threading
 from copy import deepcopy
 from collections import deque
 from datetime import datetime, timezone, timedelta
@@ -25,14 +27,16 @@ from sklearn.model_selection import train_test_split
 app = Flask(__name__)
 CORS(app)
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 print("RUNNING FILE FROM:", os.path.abspath(__file__))
+print("BASE_DIR:", BASE_DIR)
 
 # =========================================
 # LOAD MODEL + SCALER
 # =========================================
 
-model = pickle.load(open("model.pkl", "rb"))
-scaler = pickle.load(open("scaler.pkl", "rb"))
+model = pickle.load(open(os.path.join(BASE_DIR, "model.pkl"), "rb"))
+scaler = pickle.load(open(os.path.join(BASE_DIR, "scaler.pkl"), "rb"))
 
 columns = [
     "url_length",
@@ -50,19 +54,194 @@ columns = [
 
 print("DEBUG → Column count:", len(columns))
 
-SCAN_HISTORY = deque(maxlen=200)
-ALERTS = deque(maxlen=100)
-BLACKLIST = deque(maxlen=200)
-URL_RESULT_CACHE = {}
-
 ADMIN_EMAIL = os.getenv("MAPIS_ADMIN_EMAIL", "admin@mapis.local")
 ADMIN_PASSWORD = os.getenv("MAPIS_ADMIN_PASSWORD", "Admin@123")
+DATA_FILE = os.getenv("MAPIS_DATA_FILE", os.path.join(BASE_DIR, "mapis_data.json"))
+MAX_SCAN_HISTORY = 1000
+MAX_ALERTS = 500
+MAX_BLACKLIST = 500
+PUBLIC_GUEST_ID = "guest-public"
+DATA_LOCK = threading.Lock()
 AUTH_TOKENS = {}
 MODEL_METRICS_CACHE = None
 
 
 def now_utc():
     return datetime.now(timezone.utc).isoformat()
+
+
+def empty_data():
+    return {
+        "users": [],
+        "sessions": {},
+        "scanHistory": [],
+        "alerts": [],
+        "blacklist": [],
+        "urlResultCache": {}
+    }
+
+
+def load_data():
+    data = empty_data()
+
+    if os.path.exists(DATA_FILE):
+        try:
+            with open(DATA_FILE, "r", encoding="utf-8") as data_file:
+                stored = json.load(data_file)
+            if isinstance(stored, dict):
+                data.update({
+                    key: stored.get(key, data[key])
+                    for key in data
+                })
+        except (OSError, json.JSONDecodeError) as error:
+            print("DATA LOAD ERROR:", error)
+
+    for key in ["users", "scanHistory", "alerts", "blacklist"]:
+        if not isinstance(data.get(key), list):
+            data[key] = []
+
+    for key in ["sessions", "urlResultCache"]:
+        if not isinstance(data.get(key), dict):
+            data[key] = {}
+
+    return data
+
+
+def ensure_system_users(data):
+    admin = next(
+        (
+            user for user in data["users"]
+            if user.get("id") == "admin" or user.get("role") == "admin"
+        ),
+        None
+    )
+
+    if not admin:
+        data["users"].append({
+            "id": "admin",
+            "name": "Administrator",
+            "email": ADMIN_EMAIL,
+            "role": "admin",
+            "isGuest": False,
+            "createdAt": now_utc()
+        })
+    else:
+        admin.update({
+            "id": "admin",
+            "name": admin.get("name") or "Administrator",
+            "email": ADMIN_EMAIL,
+            "role": "admin",
+            "isGuest": False
+        })
+
+    public_guest = next(
+        (user for user in data["users"] if user.get("id") == PUBLIC_GUEST_ID),
+        None
+    )
+
+    if not public_guest:
+        data["users"].append({
+            "id": PUBLIC_GUEST_ID,
+            "name": "Guest Browser",
+            "email": "",
+            "role": "guest",
+            "isGuest": True,
+            "createdAt": now_utc()
+        })
+
+
+DATA = load_data()
+ensure_system_users(DATA)
+SCAN_HISTORY = deque(DATA["scanHistory"], maxlen=MAX_SCAN_HISTORY)
+ALERTS = deque(DATA["alerts"], maxlen=MAX_ALERTS)
+BLACKLIST = deque(DATA["blacklist"], maxlen=MAX_BLACKLIST)
+URL_RESULT_CACHE = DATA["urlResultCache"]
+
+
+def public_user(user):
+    if not user:
+        return None
+
+    return {
+        "id": user.get("id"),
+        "name": user.get("name", "User"),
+        "email": user.get("email", ""),
+        "role": user.get("role", "user"),
+        "isGuest": bool(user.get("isGuest", False))
+    }
+
+
+def find_user_by_id(user_id):
+    return next(
+        (user for user in DATA["users"] if user.get("id") == user_id),
+        None
+    )
+
+
+def find_user_by_email(email):
+    normalized = (email or "").strip().lower()
+    return next(
+        (
+            user for user in DATA["users"]
+            if user.get("email", "").strip().lower() == normalized
+        ),
+        None
+    )
+
+
+def sync_auth_tokens():
+    AUTH_TOKENS.clear()
+
+    for token, session in DATA["sessions"].items():
+        user = find_user_by_id(session.get("userId"))
+        if user:
+            AUTH_TOKENS[token] = public_user(user)
+
+
+def persist_state():
+    DATA["scanHistory"] = list(SCAN_HISTORY)
+    DATA["alerts"] = list(ALERTS)
+    DATA["blacklist"] = list(BLACKLIST)
+    DATA["urlResultCache"] = URL_RESULT_CACHE
+
+    with DATA_LOCK:
+        temp_file = f"{DATA_FILE}.tmp"
+        with open(temp_file, "w", encoding="utf-8") as data_file:
+            json.dump(DATA, data_file, indent=2)
+        os.replace(temp_file, DATA_FILE)
+
+
+def hash_password(password, salt=None):
+    password_salt = salt or secrets.token_hex(16)
+    digest = hashlib.pbkdf2_hmac(
+        "sha256",
+        password.encode("utf-8"),
+        password_salt.encode("utf-8"),
+        120000
+    ).hex()
+    return password_salt, digest
+
+
+def password_matches(user, password):
+    salt = user.get("passwordSalt")
+    expected = user.get("passwordHash")
+
+    if not salt or not expected:
+        return False
+
+    _, actual = hash_password(password, salt)
+    return hmac.compare_digest(actual, expected)
+
+
+def create_session(user):
+    token = secrets.token_urlsafe(32)
+    DATA["sessions"][token] = {
+        "userId": user["id"],
+        "createdAt": now_utc()
+    }
+    sync_auth_tokens()
+    persist_state()
+    return token
 
 
 def get_authenticated_user():
@@ -72,7 +251,24 @@ def get_authenticated_user():
         return None
 
     token = authorization.removeprefix("Bearer ").strip()
-    return AUTH_TOKENS.get(token)
+    session = DATA["sessions"].get(token)
+
+    if not session:
+        return None
+
+    return public_user(find_user_by_id(session.get("userId")))
+
+
+def get_scan_user():
+    return get_authenticated_user() or public_user(find_user_by_id(PUBLIC_GUEST_ID))
+
+
+def is_admin(user):
+    return bool(user and user.get("role") == "admin")
+
+
+sync_auth_tokens()
+persist_state()
 
 
 def normalize_domain(url):
@@ -106,11 +302,49 @@ def canonicalize_url(url):
 
 
 def result_from_score(prediction, risk_score):
-    if prediction == "Phishing":
-        return "Phishing"
-    if risk_score >= 40:
+    if risk_score >= 70:
+        return "Dangerous"
+    if prediction == "Phishing" or risk_score >= 40:
         return "Suspicious"
     return "Safe"
+
+
+def canonical_result(result, risk_score=0):
+    if result in ["Dangerous", "Phishing"]:
+        return "Dangerous"
+    if result == "Suspicious":
+        return "Suspicious"
+    return "Safe"
+
+
+def scan_date(scan):
+    timestamp = scan.get("timestamp") or scan.get("scannedAt")
+
+    try:
+        return datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+    except (AttributeError, ValueError):
+        return None
+
+
+def scan_reason(payload):
+    explanations = payload.get("layer3", {}).get("explanations", []) or []
+    return (
+        payload.get("layer3", {}).get("threat_type")
+        or (explanations[0] if explanations else "")
+        or "No strong phishing indicators detected"
+    )
+
+
+def ai_explanation(payload):
+    explanations = payload.get("layer3", {}).get("explanations", []) or []
+
+    if explanations:
+        return ". ".join(explanations)
+
+    if payload.get("prediction") == "Safe":
+        return "No strong phishing indicators were found by the MAPIS detection layers."
+
+    return "MAPIS detected suspicious URL, model, or page behavior signals."
 
 
 def severity_from_score(risk_score):
@@ -121,7 +355,8 @@ def severity_from_score(risk_score):
     return "Low"
 
 
-def record_scan(payload):
+def record_scan(payload, user=None):
+    owner = user or get_scan_user()
     risk_score = payload.get("risk_score", 0)
     result = result_from_score(
         payload.get("prediction", "Safe"),
@@ -130,6 +365,8 @@ def record_scan(payload):
     scanned_at = now_utc()
     domain = normalize_domain(payload.get("url", "unknown"))
     scan_id = f"SCN-{secrets.token_hex(6)}"
+    reason = scan_reason(payload)
+    explanation = ai_explanation(payload)
 
     scan = {
         "id": scan_id,
@@ -138,20 +375,27 @@ def record_scan(payload):
         "url": payload.get("url"),
         "result": result,
         "riskScore": risk_score,
+        "risk_score": risk_score,
         "time": "just now",
         "scannedAt": scanned_at,
+        "timestamp": scanned_at,
+        "user_id": owner.get("id"),
+        "ownerUserId": owner.get("id"),
+        "ownerUserName": owner.get("name"),
+        "reason": reason,
+        "aiExplanation": explanation,
         "threatType": payload.get("layer3", {}).get("threat_type"),
         "explanations": payload.get("layer3", {}).get("explanations", [])
     }
 
     SCAN_HISTORY.appendleft(scan)
 
-    if result in ["Phishing", "Suspicious"]:
+    if result in ["Dangerous", "Suspicious"]:
         ALERTS.appendleft({
             "id": f"ALT-{secrets.token_hex(6)}",
             "message": (
                 "Malicious URL Detected"
-                if result == "Phishing"
+                if result == "Dangerous"
                 else "Suspicious URL Detected"
             ),
             "detail": payload.get("url"),
@@ -159,28 +403,268 @@ def record_scan(payload):
             "createdAt": scanned_at,
             "time": "just now",
             "status": "new",
-            "riskScore": risk_score
+            "riskScore": risk_score,
+            "risk_score": risk_score,
+            "ownerUserId": owner.get("id"),
+            "ownerUserName": owner.get("name"),
+            "reason": reason
         })
 
+    persist_state()
     return scan
 
 
-def dashboard_payload():
-    history = list(SCAN_HISTORY)
-    alerts = list(ALERTS)
+def user_owns_item(user, item):
+    if not user:
+        return False
 
-    phishing = len([
-        item for item in history
-        if item["result"] == "Phishing"
-    ])
-    suspicious = len([
-        item for item in history
-        if item["result"] == "Suspicious"
-    ])
-    safe = len([
-        item for item in history
-        if item["result"] == "Safe"
-    ])
+    return (item.get("user_id") or item.get("ownerUserId", PUBLIC_GUEST_ID)) == user.get("id")
+
+
+def sanitize_alert_for_admin(alert):
+    return {
+        key: value for key, value in dict(alert).items()
+        if key not in ["ownerUserId", "ownerUserName", "user_id"]
+    }
+
+
+def sanitize_scan(scan):
+    risk_score = int(scan.get("riskScore", scan.get("risk_score", 0)) or 0)
+    result = canonical_result(scan.get("result"), risk_score)
+    scanned_at = scan.get("timestamp") or scan.get("scannedAt") or now_utc()
+
+    return {
+        "id": scan.get("id"),
+        "type": scan.get("type", "URL"),
+        "input": scan.get("input") or normalize_domain(scan.get("url", "")),
+        "url": scan.get("url"),
+        "result": result,
+        "riskScore": risk_score,
+        "risk_score": risk_score,
+        "reason": scan.get("reason") or scan.get("threatType") or "No strong phishing indicators detected",
+        "aiExplanation": scan.get("aiExplanation") or ". ".join(scan.get("explanations", []) or []),
+        "time": scan.get("time", "just now"),
+        "scannedAt": scanned_at,
+        "timestamp": scanned_at,
+        "threatType": scan.get("threatType"),
+        "explanations": scan.get("explanations", [])
+    }
+
+
+def url_scans(scans):
+    return [
+        scan for scan in scans
+        if scan.get("type", "URL") == "URL"
+    ]
+
+
+def scan_result_counts(scans):
+    counts = {
+        "safe": 0,
+        "suspicious": 0,
+        "dangerous": 0
+    }
+
+    for scan in scans:
+        risk_score = int(scan.get("riskScore", scan.get("risk_score", 0)) or 0)
+        result = canonical_result(scan.get("result"), risk_score)
+        key = result.lower()
+        counts[key] = counts.get(key, 0) + 1
+
+    return counts
+
+
+def scans_on_date(scans, target_date):
+    return [
+        scan for scan in scans
+        if (scan_date(scan) and scan_date(scan).date() == target_date)
+    ]
+
+
+def scans_since(scans, start_date):
+    return [
+        scan for scan in scans
+        if (scan_date(scan) and scan_date(scan).date() >= start_date)
+    ]
+
+
+def daily_scan_counts(scans):
+    today = datetime.now(timezone.utc).date()
+    dates = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+
+    return [
+        {
+            "day": date.strftime("%a"),
+            "date": date.isoformat(),
+            "scans": len(scans_on_date(scans, date)),
+            "threats": len([
+                scan for scan in scans_on_date(scans, date)
+                if canonical_result(scan.get("result"), scan.get("riskScore", 0)) != "Safe"
+            ])
+        }
+        for date in dates
+    ]
+
+
+def monthly_scan_counts(scans):
+    today = datetime.now(timezone.utc).date().replace(day=1)
+    months = []
+
+    for offset in range(5, -1, -1):
+        year = today.year
+        month = today.month - offset
+        while month <= 0:
+            month += 12
+            year -= 1
+        months.append(datetime(year, month, 1, tzinfo=timezone.utc).date())
+
+    rows = []
+    for month_start in months:
+        if month_start.month == 12:
+            next_month = datetime(month_start.year + 1, 1, 1, tzinfo=timezone.utc).date()
+        else:
+            next_month = datetime(month_start.year, month_start.month + 1, 1, tzinfo=timezone.utc).date()
+
+        rows.append({
+            "month": month_start.strftime("%b"),
+            "date": month_start.isoformat(),
+            "scans": len([
+                scan for scan in scans
+                if scan_date(scan)
+                and month_start <= scan_date(scan).date() < next_month
+            ])
+        })
+
+    return rows
+
+
+def detection_trends(scans):
+    today = datetime.now(timezone.utc).date()
+    dates = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
+    rows = []
+
+    for date in dates:
+        counts = scan_result_counts(scans_on_date(scans, date))
+        rows.append({
+            "day": date.strftime("%a"),
+            "date": date.isoformat(),
+            **counts
+        })
+
+    return rows
+
+
+def top_phishing_domains(scans):
+    counts = {}
+
+    for scan in scans:
+        result = canonical_result(scan.get("result"), scan.get("riskScore", 0))
+        if result == "Safe":
+            continue
+        domain = normalize_domain(scan.get("url") or scan.get("input") or "")
+        counts[domain] = counts.get(domain, 0) + 1
+
+    return [
+        {"name": domain, "value": count}
+        for domain, count in sorted(counts.items(), key=lambda item: item[1], reverse=True)[:7]
+        if domain
+    ]
+
+
+def user_url_counts():
+    counts = {}
+
+    for scan in SCAN_HISTORY:
+        owner_id = scan.get("ownerUserId", PUBLIC_GUEST_ID)
+        owner_name = scan.get("ownerUserName") or "Guest Browser"
+        summary = counts.setdefault(
+            owner_id,
+            {
+                "userId": owner_id,
+                "name": owner_name,
+                "email": "",
+                "role": "guest",
+                "isGuest": owner_id.startswith("guest"),
+                "urlsScanned": 0,
+                "totalScans": 0,
+                "lastScannedAt": None
+            }
+        )
+
+        user = find_user_by_id(owner_id)
+        if user:
+            summary.update({
+                "name": user.get("name", summary["name"]),
+                "email": user.get("email", ""),
+                "role": user.get("role", summary["role"]),
+                "isGuest": bool(user.get("isGuest", False))
+            })
+
+        summary["totalScans"] += 1
+
+        if scan.get("type") == "URL":
+            summary["urlsScanned"] += 1
+
+        scanned_at = scan.get("scannedAt")
+        if scanned_at and (
+            not summary["lastScannedAt"]
+            or scanned_at > summary["lastScannedAt"]
+        ):
+            summary["lastScannedAt"] = scanned_at
+
+    for user in DATA["users"]:
+        if user.get("role") == "admin":
+            continue
+
+        counts.setdefault(
+            user.get("id"),
+            {
+                "userId": user.get("id"),
+                "name": user.get("name", "User"),
+                "email": user.get("email", ""),
+                "role": user.get("role", "user"),
+                "isGuest": bool(user.get("isGuest", False)),
+                "urlsScanned": 0,
+                "totalScans": 0,
+                "lastScannedAt": None
+            }
+        )
+
+    return sorted(
+        counts.values(),
+        key=lambda item: (
+            item["urlsScanned"],
+            item["totalScans"],
+            item["lastScannedAt"] or ""
+        ),
+        reverse=True
+    )
+
+
+def dashboard_payload(user=None):
+    viewer = user
+    admin_view = is_admin(viewer)
+    all_history = list(SCAN_HISTORY)
+    all_alerts = list(ALERTS)
+    user_history = [
+        item for item in all_history
+        if user_owns_item(viewer, item)
+    ] if viewer and not admin_view else []
+    global_url_history = url_scans(all_history)
+    history = global_url_history if admin_view else user_history
+    alerts = (
+        [sanitize_alert_for_admin(alert) for alert in all_alerts]
+        if admin_view
+        else [
+            alert for alert in all_alerts
+            if user_owns_item(viewer, alert)
+        ]
+    ) if viewer else []
+    visible_history = [sanitize_scan(item) for item in history[:50 if admin_view else 12]]
+    result_counts = scan_result_counts(url_scans(history) if admin_view else history)
+    dangerous = result_counts["dangerous"]
+    suspicious = result_counts["suspicious"]
+    safe = result_counts["safe"]
     emails = len([
         item for item in history
         if item["type"] == "Email"
@@ -191,39 +675,31 @@ def dashboard_payload():
     ])
 
     today = datetime.now(timezone.utc).date()
-    dates = [today - timedelta(days=offset) for offset in range(6, -1, -1)]
-    threats_by_date = {date: 0 for date in dates}
-
-    for item in history:
-        if item["result"] == "Safe":
-            continue
-
-        try:
-            scanned_date = datetime.fromisoformat(
-                item["scannedAt"].replace("Z", "+00:00")
-            ).date()
-        except (KeyError, TypeError, ValueError):
-            continue
-
-        if scanned_date in threats_by_date:
-            threats_by_date[scanned_date] += 1
+    week_start = today - timedelta(days=6)
+    todays_scans = len(scans_on_date(url_scans(history), today))
+    weekly_scans = len(scans_since(url_scans(history), week_start))
 
     email_threats = len([
         item for item in history
-        if item["type"] == "Email" and item["result"] != "Safe"
+        if item["type"] == "Email"
+        and canonical_result(item.get("result"), item.get("riskScore", 0)) != "Safe"
     ])
-    malicious_urls = len([
-        item for item in history
-        if item["type"] == "URL" and item["result"] == "Phishing"
+    total_users = len([
+        user for user in DATA["users"]
+        if user.get("role") != "admin" and user.get("id") != PUBLIC_GUEST_ID
     ])
-    suspicious_urls = len([
-        item for item in history
-        if item["type"] == "URL" and item["result"] == "Suspicious"
-    ])
+    daily_scans = daily_scan_counts(url_scans(history))
 
     return {
         "stats": {
-            "totalThreats": phishing + suspicious,
+            "totalUsers": total_users if admin_view else 0,
+            "totalUrlsScanned": urls,
+            "safeUrls": safe,
+            "suspiciousUrls": suspicious,
+            "dangerousUrls": dangerous,
+            "todaysScans": todays_scans,
+            "weeklyScans": weekly_scans,
+            "totalThreats": dangerous + suspicious,
             "emailsScanned": emails,
             "urlsAnalyzed": urls,
             "suspiciousCases": suspicious,
@@ -231,27 +707,26 @@ def dashboard_payload():
             "totalScans": len(history),
             "activeSessions": len(AUTH_TOKENS)
         },
-        "threatsOverTime": [
-            {
-                "day": date.strftime("%a"),
-                "date": date.isoformat(),
-                "threats": threats_by_date[date]
-            }
-            for date in dates
-        ],
+        "threatsOverTime": daily_scans,
+        "dailyScans": daily_scans,
+        "monthlyScans": monthly_scan_counts(url_scans(history)),
+        "detectionTrends": detection_trends(url_scans(history)),
+        "topPhishingDomains": top_phishing_domains(url_scans(history)),
         "distribution": {
-            "phishing": phishing,
+            "dangerous": dangerous,
+            "phishing": dangerous,
             "suspicious": suspicious,
             "safe": safe
         },
         "attackTypes": [
             {"name": "Email", "value": email_threats},
-            {"name": "Malicious URL", "value": malicious_urls},
-            {"name": "Suspicious URL", "value": suspicious_urls}
+            {"name": "Dangerous URL", "value": dangerous},
+            {"name": "Suspicious URL", "value": suspicious}
         ],
         "alerts": alerts[:8],
-        "history": history[:12],
-        "blacklist": list(BLACKLIST)
+        "history": visible_history,
+        "blacklist": list(BLACKLIST) if admin_view else [],
+        "userUrlCounts": []
     }
 
 
@@ -261,7 +736,7 @@ def model_metrics_payload():
     if MODEL_METRICS_CACHE is not None:
         return MODEL_METRICS_CACHE
 
-    dataset_path = os.path.join(os.path.dirname(__file__), "dataset.csv")
+    dataset_path = os.path.join(BASE_DIR, "dataset.csv")
     dataset = pd.read_csv(dataset_path).fillna(0)
     features = dataset[columns]
     labels = dataset["label"]
@@ -294,7 +769,7 @@ def model_metrics_payload():
         reverse=True
     )
 
-    metadata_path = os.path.join(os.path.dirname(__file__), "model_metadata.json")
+    metadata_path = os.path.join(BASE_DIR, "model_metadata.json")
     training_metadata = {}
 
     if os.path.exists(metadata_path):
@@ -321,7 +796,7 @@ def model_metrics_payload():
             "estimators": int(model.n_estimators),
             "maxDepth": model.max_depth,
             "trainedFileUpdatedAt": datetime.fromtimestamp(
-                os.path.getmtime(os.path.join(os.path.dirname(__file__), "model.pkl")),
+                os.path.getmtime(os.path.join(BASE_DIR, "model.pkl")),
                 tz=timezone.utc
             ).isoformat()
         },
@@ -959,7 +1434,7 @@ def predict():
 
             "url": url,
 
-            "prediction": final_pred,
+            "prediction": result_from_score(final_pred, risk_score),
 
             "risk_score": risk_score,
 
@@ -997,25 +1472,118 @@ def login():
     email = data.get("email", "").strip().lower()
     password = data.get("password", "")
 
-    valid_email = hmac.compare_digest(email, ADMIN_EMAIL.lower())
-    valid_password = hmac.compare_digest(password, ADMIN_PASSWORD)
-
-    if not valid_email or not valid_password:
+    if not email or not password:
         return jsonify({
-            "error": "Invalid administrator email or password"
+            "error": "Email and password are required"
+        }), 400
+
+    valid_admin_email = hmac.compare_digest(email, ADMIN_EMAIL.lower())
+    valid_admin_password = hmac.compare_digest(password, ADMIN_PASSWORD)
+
+    if valid_admin_email and valid_admin_password:
+        user = find_user_by_id("admin")
+        token = create_session(user)
+
+        return jsonify({
+            "token": token,
+            "user": public_user(user)
+        })
+
+    user = find_user_by_email(email)
+
+    if not user or user.get("role") == "admin" or not password_matches(user, password):
+        return jsonify({
+            "error": "Invalid email or password"
         }), 401
 
-    token = secrets.token_urlsafe(32)
-    user = {
-        "name": "Administrator",
-        "email": ADMIN_EMAIL,
-        "role": "admin"
-    }
-    AUTH_TOKENS[token] = user
+    token = create_session(user)
 
     return jsonify({
         "token": token,
-        "user": user
+        "user": public_user(user)
+    })
+
+
+@app.route("/api/auth/signup", methods=["POST"])
+def signup():
+    data = request.json or {}
+    name = data.get("name", "").strip() or "MAPIS User"
+    email = data.get("email", "").strip().lower()
+    password = data.get("password", "")
+
+    if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+        return jsonify({
+            "error": "A valid email is required"
+        }), 400
+
+    if email == ADMIN_EMAIL.lower():
+        return jsonify({
+            "error": "This email is reserved for the administrator"
+        }), 400
+
+    if len(password) < 6:
+        return jsonify({
+            "error": "Password must be at least 6 characters"
+        }), 400
+
+    if find_user_by_email(email):
+        return jsonify({
+            "error": "An account already exists for this email"
+        }), 409
+
+    salt, password_hash = hash_password(password)
+    user = {
+        "id": f"usr-{secrets.token_hex(8)}",
+        "name": name,
+        "email": email,
+        "role": "user",
+        "isGuest": False,
+        "passwordSalt": salt,
+        "passwordHash": password_hash,
+        "createdAt": now_utc()
+    }
+    DATA["users"].append(user)
+    token = create_session(user)
+
+    return jsonify({
+        "token": token,
+        "user": public_user(user)
+    }), 201
+
+
+@app.route("/api/auth/guest", methods=["POST"])
+def guest_session():
+    data = request.json or {}
+    name = data.get("name", "").strip() or f"Guest {secrets.token_hex(3)}"
+    user = {
+        "id": f"guest-{secrets.token_hex(8)}",
+        "name": name,
+        "email": "",
+        "role": "guest",
+        "isGuest": True,
+        "createdAt": now_utc()
+    }
+    DATA["users"].append(user)
+    token = create_session(user)
+
+    return jsonify({
+        "token": token,
+        "user": public_user(user)
+    }), 201
+
+
+@app.route("/api/auth/logout", methods=["POST"])
+def logout():
+    authorization = request.headers.get("Authorization", "")
+
+    if authorization.startswith("Bearer "):
+        token = authorization.removeprefix("Bearer ").strip()
+        DATA["sessions"].pop(token, None)
+        sync_auth_tokens()
+        persist_state()
+
+    return jsonify({
+        "signedOut": True
     })
 
 
@@ -1035,7 +1603,7 @@ def auth_profile():
 
 @app.route("/api/dashboard", methods=["GET"])
 def dashboard():
-    return jsonify(dashboard_payload())
+    return jsonify(dashboard_payload(get_authenticated_user()))
 
 
 @app.route("/api/scan/url", methods=["POST"])
@@ -1046,6 +1614,7 @@ def scan_url():
 @app.route("/api/scan/email", methods=["POST"])
 def scan_email():
     data = request.json or {}
+    owner = get_scan_user()
     sender = data.get("sender", "").strip()
     subject = data.get("subject", "").strip()
     body = data.get("body", "").strip()
@@ -1165,16 +1734,17 @@ def scan_email():
     risk_score = min(risk_score, 100)
 
     if risk_score >= 70:
-        result = "Phishing"
+        raw_result = "Phishing"
     elif risk_score >= 35:
-        result = "Suspicious"
+        raw_result = "Suspicious"
     else:
-        result = "Safe"
+        raw_result = "Safe"
+    result = result_from_score(raw_result, risk_score)
 
     if not explanations:
         explanations.append("No phishing indicators were found in the supplied email data")
 
-    if result == "Phishing" and found_terms:
+    if result == "Dangerous" and found_terms:
         threat_type = "Content-based Phishing"
     elif result != "Safe" and domain_risk:
         threat_type = "Sender Impersonation"
@@ -1191,8 +1761,15 @@ def scan_email():
         "input": sender,
         "result": result,
         "riskScore": risk_score,
+        "risk_score": risk_score,
         "time": "just now",
         "scannedAt": scanned_at,
+        "timestamp": scanned_at,
+        "user_id": owner.get("id"),
+        "ownerUserId": owner.get("id"),
+        "ownerUserName": owner.get("name"),
+        "reason": threat_type,
+        "aiExplanation": ". ".join(explanations),
         "subject": subject,
         "threatType": threat_type,
         "explanations": explanations
@@ -1208,8 +1785,12 @@ def scan_email():
             "createdAt": scanned_at,
             "time": "just now",
             "status": "new",
-            "riskScore": risk_score
+            "riskScore": risk_score,
+            "ownerUserId": owner.get("id"),
+            "ownerUserName": owner.get("name")
         })
+
+    persist_state()
 
     return jsonify({
         "url": sender,
@@ -1248,8 +1829,22 @@ def scan_email():
 
 @app.route("/api/scan/history", methods=["GET"])
 def scan_history():
+    user = get_authenticated_user()
+    history = list(SCAN_HISTORY)
+
+    if is_admin(user):
+        return jsonify({
+            "history": [
+                sanitize_scan(item)
+                for item in url_scans(history)
+            ][:100]
+        })
+
     return jsonify({
-        "history": list(SCAN_HISTORY)[:50]
+        "history": [
+            sanitize_scan(item) for item in history
+            if user_owns_item(user, item)
+        ][:50]
     })
 
 
@@ -1277,6 +1872,13 @@ def latest_scan():
 @app.route("/api/alerts", methods=["GET", "POST"])
 def alerts():
     if request.method == "POST":
+        user = get_authenticated_user()
+
+        if not is_admin(user):
+            return jsonify({
+                "error": "Administrator authentication required"
+            }), 401
+
         data = request.json or {}
         alert = {
             "id": f"ALT-{secrets.token_hex(6)}",
@@ -1285,13 +1887,26 @@ def alerts():
             "severity": data.get("severity", "Medium"),
             "createdAt": now_utc(),
             "time": "just now",
-            "status": data.get("status", "new")
+            "status": data.get("status", "new"),
+            "ownerUserId": user.get("id"),
+            "ownerUserName": user.get("name")
         }
         ALERTS.appendleft(alert)
+        persist_state()
         return jsonify(alert), 201
 
+    user = get_authenticated_user()
+    user_alerts = (
+        [sanitize_alert_for_admin(alert) for alert in list(ALERTS)]
+        if is_admin(user)
+        else [
+            alert for alert in list(ALERTS)
+            if user_owns_item(user, alert)
+        ]
+    )
+
     return jsonify({
-        "alerts": list(ALERTS)[:50]
+        "alerts": user_alerts[:50]
     })
 
 
@@ -1311,7 +1926,7 @@ def blacklist():
 def add_blacklist():
     user = get_authenticated_user()
 
-    if not user:
+    if not is_admin(user):
         return jsonify({
             "error": "Administrator authentication required"
         }), 401
@@ -1332,6 +1947,7 @@ def add_blacklist():
         "createdAt": now_utc()
     }
     BLACKLIST.appendleft(item)
+    persist_state()
 
     return jsonify(item), 201
 
@@ -1340,7 +1956,7 @@ def add_blacklist():
 def delete_blacklist(blacklist_id):
     user = get_authenticated_user()
 
-    if not user:
+    if not is_admin(user):
         return jsonify({
             "error": "Administrator authentication required"
         }), 401
@@ -1351,6 +1967,7 @@ def delete_blacklist(blacklist_id):
     ]
     BLACKLIST.clear()
     BLACKLIST.extend(remaining)
+    persist_state()
 
     return jsonify({
         "deleted": blacklist_id,
@@ -1362,4 +1979,4 @@ def delete_blacklist(blacklist_id):
 # =========================================
 
 if __name__ == "__main__":
-    app.run(debug=True, port=int(os.getenv("PORT", "5002")))
+    app.run(debug=True, port=int(os.getenv("PORT", "5001")))

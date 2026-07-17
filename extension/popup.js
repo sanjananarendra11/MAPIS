@@ -30,7 +30,9 @@ function riskTone(score) {
 }
 
 function verdictText(data) {
-  return data.prediction === "Safe" ? "SAFE WEBSITE" : "PHISHING DETECTED";
+  if (data.prediction === "Safe") return "SAFE WEBSITE";
+  if (data.prediction === "Dangerous") return "DANGEROUS WEBSITE";
+  return "SUSPICIOUS WEBSITE";
 }
 
 function renderResult(data) {
@@ -133,6 +135,17 @@ async function getPageContent(tabId) {
   }
 }
 
+async function getAuthToken() {
+  try {
+    const response = await chrome.runtime.sendMessage({
+      action: "getAuthToken"
+    });
+    return response?.token || "";
+  } catch (error) {
+    return "";
+  }
+}
+
 async function loadCurrentTab() {
   const tab = await getActiveTab();
   currentTabUrl = canonicalUrl(tab?.url || "");
@@ -161,12 +174,18 @@ async function scanCurrentWebsite() {
     const tab = await getActiveTab();
     currentTabUrl = canonicalUrl(tab?.url || currentTabUrl);
     const pageContent = await getPageContent(tab.id);
+    const authToken = await getAuthToken();
+    const headers = {
+      "Content-Type": "application/json"
+    };
+
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
 
     const response = await fetch(`${API_BASE}/api/scan/url`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers,
       body: JSON.stringify({
         url: currentTabUrl,
         content_data: pageContent

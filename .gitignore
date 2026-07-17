@@ -3,6 +3,7 @@ SS/
 *.mov
 *.pkl
 backend/model_metadata.json
+backend/mapis_data.json
 venv/
 .venv/
 __pycache__/

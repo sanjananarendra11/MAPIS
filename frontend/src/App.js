@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Trash2,
   User,
+  UserPlus,
   Users,
   X,
   XCircle
@@ -56,6 +57,13 @@ const API_BASE = process.env.REACT_APP_API_BASE || "http://127.0.0.1:5001";
 
 const fallbackDashboard = {
   stats: {
+    totalUsers: 0,
+    totalUrlsScanned: 0,
+    safeUrls: 0,
+    suspiciousUrls: 0,
+    dangerousUrls: 0,
+    todaysScans: 0,
+    weeklyScans: 0,
     totalThreats: 0,
     emailsScanned: 0,
     urlsAnalyzed: 0,
@@ -65,8 +73,12 @@ const fallbackDashboard = {
     activeSessions: 0
   },
   threatsOverTime: [],
+  dailyScans: [],
+  monthlyScans: [],
+  detectionTrends: [],
+  topPhishingDomains: [],
   distribution: {
-    phishing: 0,
+    dangerous: 0,
     suspicious: 0,
     safe: 0
   },
@@ -81,7 +93,7 @@ const navItems = [
   { label: "Analyze", icon: Search },
   { label: "Real-time Alerts", icon: Bell },
   { label: "History / Logs", icon: FileClock },
-  { label: "Blacklist Manager", icon: ShieldAlert },
+  { label: "Blacklist Manager", icon: ShieldAlert, adminOnly: true },
   { label: "Model Performance", icon: Activity },
   { label: "Reports", icon: BarChart3 },
   { label: "Settings", icon: Settings },
@@ -106,6 +118,23 @@ function formatAxis(value) {
 
 function resultClass(result) {
   return String(result || "Safe").toLowerCase();
+}
+
+function formatScanTime(scan) {
+  const timestamp = scan?.timestamp || scan?.scannedAt;
+
+  if (!timestamp) return scan?.time || "Unknown";
+
+  const date = new Date(timestamp);
+
+  if (Number.isNaN(date.getTime())) {
+    return scan?.time || "Unknown";
+  }
+
+  return date.toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
+  });
 }
 
 function getRiskTone(score) {
@@ -263,12 +292,12 @@ function MiniLineChart({ data, dataKey = "threats", xKey = "day", color = "#ef44
 }
 
 function DistributionChart({ distribution }) {
-  const phishing = Number(distribution.phishing || 0);
+  const dangerous = Number(distribution.dangerous || distribution.phishing || 0);
   const suspicious = Number(distribution.suspicious || 0);
   const safe = Number(distribution.safe || 0);
-  const total = phishing + suspicious + safe;
+  const total = dangerous + suspicious + safe;
   const data = [
-    { name: "Phishing", value: phishing, color: "#ef4444" },
+    { name: "Dangerous", value: dangerous, color: "#ef4444" },
     { name: "Suspicious", value: suspicious, color: "#f59e0b" },
     { name: "Safe", value: safe, color: "#22c55e" }
   ];
@@ -339,6 +368,50 @@ function LegendItem({ color, label, value, total }) {
   );
 }
 
+function DetectionTrendChart({ data }) {
+  if (!data.length || !data.some((item) => (
+    Number(item.safe) + Number(item.suspicious) + Number(item.dangerous)
+  ) > 0)) {
+    return <div className="chart-empty">No detection trend data recorded yet.</div>;
+  }
+
+  return (
+    <div className="chart-wrap compact">
+      <ResponsiveContainer
+        width="100%"
+        height={238}
+        minWidth={1}
+        minHeight={1}
+        initialDimension={{ width: 480, height: 238 }}
+      >
+        <ReBarChart data={data} margin={{ top: 10, right: 8, left: 2, bottom: 4 }}>
+          <CartesianGrid vertical={false} stroke="rgba(148,163,184,0.1)" />
+          <XAxis
+            dataKey="day"
+            stroke="#94a3b8"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fontSize: 11 }}
+            tickMargin={9}
+          />
+          <YAxis
+            width={42}
+            stroke="#94a3b8"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fontSize: 11 }}
+            tickFormatter={formatAxis}
+          />
+          <Tooltip content={<ChartTooltip />} />
+          <Bar dataKey="safe" stackId="a" radius={[0, 0, 0, 0]} fill="#22c55e" />
+          <Bar dataKey="suspicious" stackId="a" radius={[0, 0, 0, 0]} fill="#f59e0b" />
+          <Bar dataKey="dangerous" stackId="a" radius={[6, 6, 0, 0]} fill="#ef4444" />
+        </ReBarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function AttackBarChart({ data }) {
   if (!data.length || !data.some((item) => Number(item.value) > 0)) {
     return <div className="chart-empty">No detected attack categories yet.</div>;
@@ -349,6 +422,8 @@ function AttackBarChart({ data }) {
     shortName:
       item.name === "Malicious URL"
         ? "URL"
+        : item.name === "Dangerous URL"
+          ? "Danger"
         : item.name === "Attachments"
           ? "Files"
           : item.name
@@ -578,18 +653,20 @@ function MultilayerAnalysis({ result }) {
   }
 
   const analysis = result;
+  const isSafe = analysis.prediction === "Safe";
+  const isDangerous = analysis.prediction === "Dangerous";
   const layers = [
     {
       title: "Layer 1: URL Analysis",
       subtitle: "Detects suspicious URL patterns and domain characteristics.",
-      status: analysis.prediction === "Safe" ? "Safe" : "Suspicious",
-      tone: analysis.prediction === "Safe" ? "green" : "red"
+      status: isSafe ? "Safe" : analysis.prediction,
+      tone: isSafe ? "green" : isDangerous ? "red" : "amber"
     },
     {
       title: "Layer 2: ML Analysis",
       subtitle: "Uses a Random Forest model to classify websites from extracted URL features.",
-      status: analysis.prediction === "Safe" ? "Safe" : "Phishing",
-      tone: analysis.prediction === "Safe" ? "green" : "red"
+      status: isSafe ? "Safe" : analysis.prediction,
+      tone: isSafe ? "green" : isDangerous ? "red" : "amber"
     },
     {
       title: "Layer 3: Website Behavior Analysis",
@@ -606,8 +683,8 @@ function MultilayerAnalysis({ result }) {
     {
       title: "Layer 5: Sender Reputation Analysis",
       subtitle: "Evaluates domain and IP reputation.",
-      status: analysis.prediction === "Safe" ? "Trusted" : "Poor",
-      tone: analysis.prediction === "Safe" ? "green" : "red"
+      status: isSafe ? "Trusted" : "Poor",
+      tone: isSafe ? "green" : isDangerous ? "red" : "amber"
     }
   ];
 
@@ -628,13 +705,13 @@ function MultilayerAnalysis({ result }) {
         ))}
       </div>
       <div className={`final-result ${resultClass(analysis.prediction)}`}>
-        <IconBadge tone={analysis.prediction === "Safe" ? "green" : "red"} size="small">
-          {analysis.prediction === "Safe" ? <ShieldCheck /> : <ShieldAlert />}
+        <IconBadge tone={isSafe ? "green" : isDangerous ? "red" : "amber"} size="small">
+          {isSafe ? <ShieldCheck /> : <ShieldAlert />}
         </IconBadge>
         <div>
           <span>Final Result</span>
           <strong>
-            {analysis.prediction === "Safe" ? "SAFE WEBSITE" : "PHISHING DETECTED"}
+            {isSafe ? "SAFE WEBSITE" : isDangerous ? "DANGEROUS WEBSITE" : "SUSPICIOUS WEBSITE"}
           </strong>
         </div>
       </div>
@@ -682,7 +759,7 @@ function ScanTable({ history, title = "Recent Scans / History", limit = 7 }) {
             onChange={(event) => setStatusFilter(event.target.value)}
           >
             <option value="All">All Statuses</option>
-            <option value="Phishing">Phishing</option>
+            <option value="Dangerous">Dangerous</option>
             <option value="Suspicious">Suspicious</option>
             <option value="Safe">Safe</option>
           </select>
@@ -691,9 +768,10 @@ function ScanTable({ history, title = "Recent Scans / History", limit = 7 }) {
       <div className="scan-table">
         <div className="table-head">
           <span>Type</span>
-          <span>Input</span>
+          <span>URL</span>
           <span>Result</span>
           <span>Risk Score</span>
+          <span>Reason</span>
           <span>Time</span>
         </div>
         {rows.map((scan) => (
@@ -701,10 +779,11 @@ function ScanTable({ history, title = "Recent Scans / History", limit = 7 }) {
             <IconBadge tone={scan.type === "Email" ? "purple" : "blue"} size="tiny">
               {scan.type === "Email" ? <Mail /> : <Globe2 />}
             </IconBadge>
-            <span title={scan.input}>{scan.input}</span>
+            <span title={scan.url || scan.input}>{scan.url || scan.input}</span>
             <b className={resultClass(scan.result)}>{scan.result}</b>
             <strong className={resultClass(scan.result)}>{scan.riskScore}%</strong>
-            <time>{scan.time}</time>
+            <span title={scan.aiExplanation || scan.reason}>{scan.reason || scan.threatType || "Recorded scan"}</span>
+            <time>{formatScanTime(scan)}</time>
           </div>
         ))}
         {rows.length === 0 && <div className="empty-state">No scans match these filters.</div>}
@@ -745,7 +824,7 @@ function SystemStatus({ modelMetrics, stats }) {
   );
 }
 
-function DashboardView({ cards, dashboard, result, onNavigate }) {
+function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
   return (
     <>
       <section className="stat-grid">
@@ -756,7 +835,7 @@ function DashboardView({ cards, dashboard, result, onNavigate }) {
 
       <section className="analytics-grid">
         <Panel
-          title="Threats Over Time"
+          title={isAdmin ? "Daily Scans" : "Threats Over Time"}
           action={
             <label className="compact-select">
               <CalendarDays />
@@ -769,16 +848,41 @@ function DashboardView({ cards, dashboard, result, onNavigate }) {
           }
           className="wide-panel"
         >
-          <MiniLineChart data={dashboard.threatsOverTime || fallbackDashboard.threatsOverTime} />
+          <MiniLineChart
+            data={isAdmin
+              ? dashboard.dailyScans || fallbackDashboard.dailyScans
+              : dashboard.threatsOverTime || fallbackDashboard.threatsOverTime}
+            dataKey={isAdmin ? "scans" : "threats"}
+            color={isAdmin ? "#3b82f6" : "#ef4444"}
+          />
         </Panel>
 
-        <Panel title="Detection Distribution">
+        <Panel title="Safe vs Suspicious vs Dangerous">
           <DistributionChart distribution={dashboard.distribution || fallbackDashboard.distribution} />
         </Panel>
 
-        <Panel title="Attack Type Distribution">
-          <AttackBarChart data={dashboard.attackTypes || fallbackDashboard.attackTypes} />
-        </Panel>
+        {isAdmin ? (
+          <>
+            <Panel title="Monthly Scans">
+              <MiniLineChart
+                data={dashboard.monthlyScans || fallbackDashboard.monthlyScans}
+                dataKey="scans"
+                xKey="month"
+                color="#8b5cf6"
+              />
+            </Panel>
+            <Panel title="Top Phishing Domains">
+              <AttackBarChart data={dashboard.topPhishingDomains || fallbackDashboard.topPhishingDomains} />
+            </Panel>
+            <Panel title="Detection Trends" className="wide-panel">
+              <DetectionTrendChart data={dashboard.detectionTrends || fallbackDashboard.detectionTrends} />
+            </Panel>
+          </>
+        ) : (
+          <Panel title="Attack Type Distribution">
+            <AttackBarChart data={dashboard.attackTypes || fallbackDashboard.attackTypes} />
+          </Panel>
+        )}
 
         <AlertsPanel
           alerts={dashboard.alerts || fallbackDashboard.alerts}
@@ -789,7 +893,11 @@ function DashboardView({ cards, dashboard, result, onNavigate }) {
       <section className="analysis-grid">
         <DetectionDetails result={result} />
         <MultilayerAnalysis result={result} />
-        <ScanTable history={dashboard.history || fallbackDashboard.history} />
+        <ScanTable
+          history={dashboard.history || fallbackDashboard.history}
+          title={isAdmin ? "Global Scan History" : "Recent Scans / History"}
+          limit={isAdmin ? 50 : 7}
+        />
       </section>
     </>
   );
@@ -1198,13 +1306,14 @@ function ReportsView({ dashboard }) {
 
   const exportCsv = () => {
     const rows = [
-      ["Type", "Input", "Result", "Risk Score", "Time"],
+      ["Type", "URL", "Result", "Risk Score", "Reason", "Time"],
       ...(dashboard.history || []).map((scan) => [
         scan.type,
-        scan.input,
+        scan.url || scan.input,
         scan.result,
         scan.riskScore,
-        scan.time
+        scan.reason || scan.threatType || "",
+        formatScanTime(scan)
       ])
     ];
     const csv = rows
@@ -1306,7 +1415,7 @@ function HelpView() {
     ["How is a URL scored?", "MAPIS combines URL syntax, HTTPS, brand spoofing, blacklist, content, and ML signals."],
     ["What does Suspicious mean?", "The scan found meaningful risk indicators, but not enough evidence for a phishing verdict."],
     ["How do I use browser protection?", "Load the extension folder in Chrome and keep the Flask API running on port 5001."],
-    ["Where is scan history stored?", "This development version stores live records in memory until the backend restarts."]
+    ["Where is scan history stored?", "MAPIS stores account, guest, scan, alert, and blacklist records in the backend data file."]
   ];
 
   return (
@@ -1334,31 +1443,87 @@ function HelpView() {
   );
 }
 
-function AdminLoginModal({ open, onClose, onLogin, error, loading }) {
-  const [email, setEmail] = useState("admin@mapis.local");
-  const [password, setPassword] = useState("Admin@123");
+function AuthModal({ open, onClose, onLogin, onSignup, onGuest, error, loading }) {
+  const [mode, setMode] = useState("user");
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
 
   if (!open) return null;
 
   const submit = (event) => {
     event.preventDefault();
+    if (mode === "signup") {
+      onSignup({ name, email, password });
+      return;
+    }
     onLogin({ email, password });
   };
+
+  const title = mode === "admin"
+    ? "Administrator Login"
+    : mode === "signup"
+      ? "Create Account"
+      : "User Login";
 
   return (
     <div className="modal-backdrop" role="presentation">
       <section className="login-modal" role="dialog" aria-modal="true" aria-labelledby="login-title">
-        <button className="modal-close" aria-label="Close admin login" onClick={onClose}>
+        <button className="modal-close" aria-label="Close login" onClick={onClose}>
           <X />
         </button>
         <div className="login-heading">
-          <IconBadge tone="blue"><KeyRound /></IconBadge>
+          <IconBadge tone={mode === "admin" ? "amber" : "blue"}>
+            {mode === "signup" ? <UserPlus /> : <KeyRound />}
+          </IconBadge>
           <div>
-            <h2 id="login-title">Administrator Login</h2>
-            <p>Authenticate to manage protected MAPIS controls.</p>
+            <h2 id="login-title">{title}</h2>
+            <p>
+              {mode === "admin"
+                ? "Authenticate to manage protected MAPIS controls."
+                : "Use MAPIS with your own saved scan history."}
+            </p>
           </div>
         </div>
+        <div className="auth-mode-tabs" aria-label="Authentication mode">
+          <button
+            className={mode === "user" ? "active" : ""}
+            onClick={() => setMode("user")}
+            type="button"
+          >
+            <User />
+            User
+          </button>
+          <button
+            className={mode === "admin" ? "active" : ""}
+            onClick={() => setMode("admin")}
+            type="button"
+          >
+            <ShieldAlert />
+            Admin
+          </button>
+          <button
+            className={mode === "signup" ? "active" : ""}
+            onClick={() => setMode("signup")}
+            type="button"
+          >
+            <UserPlus />
+            Sign Up
+          </button>
+        </div>
         <form onSubmit={submit} className="login-form">
+          {mode === "signup" && (
+            <label>
+              Name
+              <input
+                value={name}
+                onChange={(event) => setName(event.target.value)}
+                autoComplete="name"
+                placeholder="Your name"
+                required
+              />
+            </label>
+          )}
           <label>
             Email
             <input
@@ -1366,6 +1531,7 @@ function AdminLoginModal({ open, onClose, onLogin, error, loading }) {
               value={email}
               onChange={(event) => setEmail(event.target.value)}
               autoComplete="username"
+              placeholder={mode === "admin" ? "admin@mapis.local" : "you@example.com"}
               required
             />
           </label>
@@ -1375,15 +1541,24 @@ function AdminLoginModal({ open, onClose, onLogin, error, loading }) {
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
-              autoComplete="current-password"
+              autoComplete={mode === "signup" ? "new-password" : "current-password"}
+              placeholder={mode === "admin" ? "Admin@123" : "At least 6 characters"}
               required
             />
           </label>
           {error && <div className="form-error">{error}</div>}
           <button className="primary-button login-submit" type="submit" disabled={loading}>
-            {loading ? "Signing in..." : "Sign In"}
+            {loading ? "Working..." : mode === "signup" ? "Create Account" : "Sign In"}
           </button>
         </form>
+        <button
+          className="guest-continue-button"
+          onClick={onGuest}
+          type="button"
+          disabled={loading}
+        >
+          Continue Without Signup
+        </button>
       </section>
     </div>
   );
@@ -1397,7 +1572,7 @@ function App() {
   const [result, setResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [admin, setAdmin] = useState(null);
+  const [account, setAccount] = useState(null);
   const [authToken, setAuthToken] = useState(() => localStorage.getItem("mapis-token") || "");
   const [loginOpen, setLoginOpen] = useState(false);
   const [loginError, setLoginError] = useState("");
@@ -1406,9 +1581,69 @@ function App() {
   const [modelMetrics, setModelMetrics] = useState(null);
 
   const scanResult = result;
+  const isAdmin = account?.role === "admin";
+  const admin = isAdmin ? account : null;
+  const visibleNavItems = useMemo(
+    () => navItems.filter((item) => !item.adminOnly || isAdmin),
+    [isAdmin]
+  );
 
   const cards = useMemo(() => {
     const stats = dashboard.stats || fallbackDashboard.stats;
+    if (isAdmin) {
+      return [
+        {
+          label: "Total Users",
+          value: stats.totalUsers,
+          detail: "Registered and guest accounts",
+          tone: "blue",
+          icon: Users
+        },
+        {
+          label: "Total URLs Scanned",
+          value: stats.totalUrlsScanned ?? stats.urlsAnalyzed,
+          detail: `${formatNumber(stats.totalScans)} global URL records`,
+          tone: "purple",
+          icon: Globe2
+        },
+        {
+          label: "Safe URLs",
+          value: stats.safeUrls ?? stats.safeResults,
+          detail: "No strong phishing indicators",
+          tone: "green",
+          icon: ShieldCheck
+        },
+        {
+          label: "Suspicious URLs",
+          value: stats.suspiciousUrls ?? stats.suspiciousCases,
+          detail: "Needs user caution",
+          tone: "amber",
+          icon: AlertTriangle
+        },
+        {
+          label: "Dangerous URLs",
+          value: stats.dangerousUrls,
+          detail: "High-risk detections",
+          tone: "red",
+          icon: ShieldAlert
+        },
+        {
+          label: "Today's Scans",
+          value: stats.todaysScans,
+          detail: "UTC day window",
+          tone: "blue",
+          icon: CalendarDays
+        },
+        {
+          label: "Weekly Scans",
+          value: stats.weeklyScans,
+          detail: "Last seven days",
+          tone: "purple",
+          icon: Activity
+        }
+      ];
+    }
+
     return [
       {
         label: "Total Threats Detected",
@@ -1446,11 +1681,14 @@ function App() {
         icon: ShieldCheck
       }
     ];
-  }, [dashboard]);
+  }, [dashboard, isAdmin]);
 
-  const loadDashboard = useCallback(async () => {
+  const loadDashboard = useCallback(async (tokenOverride) => {
     try {
-      const response = await fetch(`${API_BASE}/api/dashboard`);
+      const token = tokenOverride ?? authToken;
+      const response = await fetch(`${API_BASE}/api/dashboard`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {}
+      });
       if (!response.ok) return;
       const data = await response.json();
       setDashboard((current) => ({
@@ -1461,7 +1699,7 @@ function App() {
     } catch (requestError) {
       console.info("Using local dashboard data:", requestError.message);
     }
-  }, []);
+  }, [authToken]);
 
   const loadModelMetrics = useCallback(async () => {
     try {
@@ -1492,11 +1730,11 @@ function App() {
         });
         if (!response.ok) throw new Error("Session expired");
         const data = await response.json();
-        setAdmin(data.user);
+        setAccount(data.user);
       } catch (profileError) {
         localStorage.removeItem("mapis-token");
         setAuthToken("");
-        setAdmin(null);
+        setAccount(null);
       }
     };
 
@@ -1504,8 +1742,46 @@ function App() {
   }, [authToken]);
 
   useEffect(() => {
+    window.postMessage(
+      {
+        source: "MAPIS_DASHBOARD",
+        type: authToken ? "MAPIS_AUTH_TOKEN" : "MAPIS_CLEAR_AUTH_TOKEN",
+        token: authToken
+      },
+      window.location.origin
+    );
+  }, [authToken]);
+
+  useEffect(() => {
     window.scrollTo({ top: 0, behavior: "smooth" });
   }, [activeView]);
+
+  useEffect(() => {
+    if (!visibleNavItems.some((item) => item.label === activeView)) {
+      setActiveView("Dashboard");
+    }
+  }, [activeView, visibleNavItems]);
+
+  const persistSession = (token, user) => {
+    localStorage.setItem("mapis-token", token);
+    setAuthToken(token);
+    setAccount(user);
+  };
+
+  const startGuestSession = async ({ notify = true } = {}) => {
+    const response = await fetch(`${API_BASE}/api/auth/guest`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({})
+    });
+    const data = await response.json();
+
+    if (!response.ok) throw new Error(data.error || "Could not start guest session");
+
+    persistSession(data.token, data.user);
+    if (notify) toast.info("Guest session started");
+    return data.token;
+  };
 
   const scanInput = async (payload) => {
     const explicitPayload = payload && typeof payload === "object" && !("nativeEvent" in payload)
@@ -1524,6 +1800,7 @@ function App() {
     setError("");
 
     try {
+      const scanToken = authToken || await startGuestSession({ notify: false });
       const endpoint = analysisType === "URL" ? `${API_BASE}/api/scan/url` : `${API_BASE}/api/scan/email`;
       const body = analysisType === "URL"
         ? { url: normalized }
@@ -1536,7 +1813,10 @@ function App() {
 
       const response = await fetch(endpoint, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${scanToken}`
+        },
         body: JSON.stringify(body)
       });
       const data = await response.json();
@@ -1547,7 +1827,7 @@ function App() {
 
       toast.success(`${analysisType} scan completed`);
       setActiveView("Analyze");
-      await loadDashboard();
+      await loadDashboard(scanToken);
     } catch (scanError) {
       toast.error(scanError.message || "Scan failed");
       setError(scanError.message || "Failed to connect to backend.");
@@ -1556,7 +1836,7 @@ function App() {
     }
   };
 
-  const loginAdmin = async (credentials) => {
+  const loginAccount = async (credentials) => {
     setLoginLoading(true);
     setLoginError("");
     try {
@@ -1568,11 +1848,10 @@ function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || "Login failed");
 
-      localStorage.setItem("mapis-token", data.token);
-      setAuthToken(data.token);
-      setAdmin(data.user);
+      persistSession(data.token, data.user);
       setLoginOpen(false);
-      toast.success("Administrator signed in");
+      setProfileOpen(false);
+      toast.success(data.user?.role === "admin" ? "Administrator signed in" : "Signed in");
     } catch (loginRequestError) {
       setLoginError(loginRequestError.message || "Login failed");
     } finally {
@@ -1580,12 +1859,60 @@ function App() {
     }
   };
 
-  const logoutAdmin = () => {
+  const signupAccount = async (credentials) => {
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      const response = await fetch(`${API_BASE}/api/auth/signup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(credentials)
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "Signup failed");
+
+      persistSession(data.token, data.user);
+      setLoginOpen(false);
+      setProfileOpen(false);
+      toast.success("Account created");
+    } catch (signupError) {
+      setLoginError(signupError.message || "Signup failed");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const continueAsGuest = async () => {
+    setLoginLoading(true);
+    setLoginError("");
+    try {
+      await startGuestSession();
+      setLoginOpen(false);
+      setProfileOpen(false);
+    } catch (guestError) {
+      setLoginError(guestError.message || "Could not continue as guest");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const logoutAccount = async () => {
+    if (authToken) {
+      try {
+        await fetch(`${API_BASE}/api/auth/logout`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${authToken}` }
+        });
+      } catch (logoutError) {
+        console.info("Logout request failed:", logoutError.message);
+      }
+    }
+
     localStorage.removeItem("mapis-token");
     setAuthToken("");
-    setAdmin(null);
+    setAccount(null);
     setProfileOpen(false);
-    toast.info("Administrator signed out");
+    toast.info("Signed out");
   };
 
   const addBlacklist = async (domain, reason) => {
@@ -1646,7 +1973,7 @@ function App() {
       case "History / Logs":
         return <HistoryView history={dashboard.history || fallbackDashboard.history} />;
       case "Blacklist Manager":
-        return (
+        return isAdmin ? (
           <BlacklistView
             entries={dashboard.blacklist || fallbackDashboard.blacklist}
             isAdmin={Boolean(admin)}
@@ -1654,7 +1981,7 @@ function App() {
             onDelete={deleteBlacklist}
             onRequireLogin={() => setLoginOpen(true)}
           />
-        );
+        ) : null;
       case "Model Performance":
         return <ModelPerformanceView modelMetrics={modelMetrics} />;
       case "Reports":
@@ -1670,6 +1997,7 @@ function App() {
             dashboard={dashboard}
             result={scanResult}
             onNavigate={setActiveView}
+            isAdmin={isAdmin}
           />
         );
     }
@@ -1687,7 +2015,7 @@ function App() {
         </div>
 
         <nav className="side-nav" aria-label="Main navigation">
-          {navItems.map((item) => {
+          {visibleNavItems.map((item) => {
             const NavIcon = item.icon;
             return (
               <button
@@ -1753,17 +2081,18 @@ function App() {
               <button
                 className="admin-pill"
                 data-testid="admin-control"
-                onClick={() => (admin ? setProfileOpen((value) => !value) : setLoginOpen(true))}
+                onClick={() => (account ? setProfileOpen((value) => !value) : setLoginOpen(true))}
               >
                 <span><User /></span>
-                <b>{admin?.name || "Admin"}</b>
+                <b>{account?.name || "Sign In"}</b>
                 <ChevronDown />
               </button>
-              {admin && profileOpen && (
+              {account && profileOpen && (
                 <div className="profile-menu">
-                  <strong>{admin.name}</strong>
-                  <span>{admin.email}</span>
-                  <button onClick={logoutAdmin}><LogOut />Sign Out</button>
+                  <strong>{account.name}</strong>
+                  <span>{account.email || (account.isGuest ? "Guest session" : account.role)}</span>
+                  <small>{account.role === "admin" ? "Administrator" : account.isGuest ? "Guest" : "User"}</small>
+                  <button onClick={logoutAccount}><LogOut />Sign Out</button>
                 </div>
               )}
             </div>
@@ -1783,13 +2112,15 @@ function App() {
         <ToastContainer position="bottom-right" theme="dark" autoClose={2600} />
       </main>
 
-      <AdminLoginModal
+      <AuthModal
         open={loginOpen}
         onClose={() => {
           setLoginOpen(false);
           setLoginError("");
         }}
-        onLogin={loginAdmin}
+        onLogin={loginAccount}
+        onSignup={signupAccount}
+        onGuest={continueAsGuest}
         error={loginError}
         loading={loginLoading}
       />

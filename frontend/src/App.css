@@ -406,6 +406,17 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
+.profile-menu small {
+  display: block;
+  width: fit-content;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border-radius: 6px;
+  color: #bfdbfe;
+  background: rgba(59, 130, 246, 0.14);
+  font-size: 11px;
+}
+
 .profile-menu button {
   width: 100%;
   min-height: 36px;
@@ -857,7 +868,8 @@ summary:focus-visible {
   white-space: nowrap;
 }
 
-.phishing {
+.phishing,
+.dangerous {
   color: #f87171;
 }
 
@@ -870,6 +882,7 @@ summary:focus-visible {
 }
 
 .scan-target b.phishing,
+.scan-target b.dangerous,
 .status-chip.red,
 .severity-badge.high {
   color: #fecaca;
@@ -1075,9 +1088,9 @@ summary:focus-visible {
 
 .table-head,
 .table-row {
-  min-width: 620px;
+  min-width: 820px;
   display: grid;
-  grid-template-columns: 54px minmax(190px, 1.5fr) minmax(90px, 0.7fr) minmax(90px, 0.7fr) minmax(78px, 0.55fr);
+  grid-template-columns: 54px minmax(220px, 1.5fr) minmax(100px, 0.6fr) minmax(90px, 0.55fr) minmax(180px, 1fr) minmax(82px, 0.45fr);
   align-items: center;
   gap: 10px;
   padding: 11px 12px;
@@ -1474,6 +1487,69 @@ summary:focus-visible {
   border-radius: 8px;
 }
 
+.user-count-table {
+  overflow-x: auto;
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  border-radius: 8px;
+}
+
+.user-count-head,
+.user-count-row {
+  min-width: 790px;
+  display: grid;
+  grid-template-columns: minmax(220px, 1.4fr) minmax(90px, 0.55fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(180px, 0.9fr);
+  align-items: center;
+  gap: 12px;
+  padding: 11px 12px;
+}
+
+.user-count-head {
+  color: var(--muted);
+  background: rgba(15, 23, 42, 0.88);
+  font-size: 11px;
+}
+
+.user-count-row {
+  border-top: 1px solid rgba(148, 163, 184, 0.1);
+  font-size: 12px;
+}
+
+.user-count-row > div {
+  min-width: 0;
+}
+
+.user-count-row strong,
+.user-count-row span {
+  min-width: 0;
+}
+
+.user-count-row > div strong,
+.user-count-row > div span {
+  display: block;
+}
+
+.user-count-row > div span {
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.user-count-row b {
+  width: fit-content;
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: #dbeafe;
+  background: rgba(59, 130, 246, 0.14);
+  text-transform: capitalize;
+}
+
+.user-count-row time {
+  color: var(--muted);
+  white-space: nowrap;
+}
+
 .blacklist-head,
 .blacklist-row {
   min-width: 760px;
@@ -1849,6 +1925,41 @@ summary:focus-visible {
   line-height: 1.4;
 }
 
+.auth-mode-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+  margin-top: 18px;
+  padding: 4px;
+  border-radius: 8px;
+  background: rgba(15, 23, 42, 0.82);
+}
+
+.auth-mode-tabs button {
+  min-width: 0;
+  min-height: 36px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  padding: 0 9px;
+  border-radius: 6px;
+  color: #94a3b8;
+  background: transparent;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.auth-mode-tabs button.active {
+  color: white;
+  background: #2563eb;
+}
+
+.auth-mode-tabs svg {
+  width: 15px;
+  height: 15px;
+}
+
 .login-form {
   display: grid;
   gap: 13px;
@@ -1866,6 +1977,22 @@ summary:focus-visible {
 .login-submit {
   width: 100%;
   margin-top: 2px;
+}
+
+.guest-continue-button {
+  width: 100%;
+  min-height: 38px;
+  margin-top: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 8px;
+  color: #cbd5e1;
+  background: rgba(15, 23, 42, 0.72);
+  cursor: pointer;
+}
+
+.guest-continue-button:disabled {
+  cursor: progress;
+  opacity: 0.65;
 }
 
 .Toastify__toast {

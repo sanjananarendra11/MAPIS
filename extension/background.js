@@ -1,6 +1,7 @@
 const API_BASE = "http://127.0.0.1:5001";
 const lastScanned = new Map();
 const lastResults = new Map();
+const AUTH_TOKEN_KEY = "mapisAuthToken";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.action.setBadgeBackgroundColor({ color: "#3b82f6" });
@@ -23,6 +24,15 @@ function canonicalUrl(url) {
     return parsed.toString().replace(/\/$/, "");
   } catch (error) {
     return url || "";
+  }
+}
+
+async function getStoredAuthToken() {
+  try {
+    const stored = await chrome.storage.local.get(AUTH_TOKEN_KEY);
+    return stored[AUTH_TOKEN_KEY] || "";
+  } catch (error) {
+    return "";
   }
 }
 
@@ -54,11 +64,18 @@ async function scanTab(tabId, url) {
       // Content scripts are not available on every Chrome page.
     }
 
+    const authToken = await getStoredAuthToken();
+    const headers = {
+      "Content-Type": "application/json"
+    };
+
+    if (authToken) {
+      headers.Authorization = `Bearer ${authToken}`;
+    }
+
     const response = await fetch(`${API_BASE}/api/scan/url`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers,
       body: JSON.stringify({
         url: normalizedUrl,
         content_data: contentData
@@ -114,6 +131,27 @@ chrome.tabs.onRemoved.addListener((tabId) => {
 });
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
+  if (request.action === "setAuthToken") {
+    chrome.storage.local.set({
+      [AUTH_TOKEN_KEY]: request.token || ""
+    });
+    sendResponse({ stored: true });
+    return true;
+  }
+
+  if (request.action === "clearAuthToken") {
+    chrome.storage.local.remove(AUTH_TOKEN_KEY);
+    sendResponse({ cleared: true });
+    return true;
+  }
+
+  if (request.action === "getAuthToken") {
+    getStoredAuthToken().then((token) => {
+      sendResponse({ token });
+    });
+    return true;
+  }
+
   if (request.action !== "getLatestResult") {
     return false;
   }
