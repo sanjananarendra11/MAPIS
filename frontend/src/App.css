@@ -494,6 +494,20 @@ summary:focus-visible {
   overflow: hidden;
 }
 
+.stat-card.clickable {
+  width: 100%;
+  appearance: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.stat-card.clickable:focus-visible {
+  outline: 2px solid rgba(59, 130, 246, 0.7);
+  outline-offset: 3px;
+}
+
 .stat-copy {
   min-width: 0;
 }
@@ -1495,9 +1509,9 @@ summary:focus-visible {
 
 .user-count-head,
 .user-count-row {
-  min-width: 790px;
+  min-width: 420px;
   display: grid;
-  grid-template-columns: minmax(220px, 1.4fr) minmax(90px, 0.55fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(180px, 0.9fr);
+  grid-template-columns: minmax(220px, 1fr) minmax(110px, 0.35fr);
   align-items: center;
   gap: 12px;
   padding: 11px 12px;

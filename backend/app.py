@@ -64,6 +64,51 @@ PUBLIC_GUEST_ID = "guest-public"
 DATA_LOCK = threading.Lock()
 AUTH_TOKENS = {}
 MODEL_METRICS_CACHE = None
+TRUSTED_DOMAINS = {
+    "google.com",
+    "github.com",
+    "microsoft.com",
+    "amazon.com",
+    "paypal.com",
+    "apple.com",
+    "facebook.com",
+    "instagram.com",
+    "linkedin.com",
+    "openai.com",
+    "figma.com",
+    "nptel.ac.in",
+    "swayam.gov.in",
+    "swayam2.ac.in",
+    "coursera.org",
+    "udemy.com",
+    "youtube.com",
+    "wikipedia.org"
+}
+TRUSTED_SUFFIXES = (
+    ".edu",
+    ".edu.in",
+    ".ac.in",
+    ".gov",
+    ".gov.in"
+)
+TRUSTED_LOCAL_HOSTS = {
+    "localhost",
+    "127.0.0.1",
+    "::1"
+}
+TRUSTED_SCHEMES = {
+    "about",
+    "brave",
+    "chrome",
+    "chrome-extension",
+    "edge"
+}
+TRUSTED_SAFE_RISK_SCORE = 5
+TRUSTED_REASON = "Verified trusted domain"
+TRUSTED_EXPLANATION = (
+    "The URL belongs to a trusted domain or local browser page, "
+    "so URL complexity alone is not treated as phishing."
+)
 
 
 def now_utc():
@@ -189,6 +234,48 @@ def find_user_by_email(email):
     )
 
 
+def claim_public_guest_scans(user):
+    if (
+        not user
+        or user.get("role") == "admin"
+        or user.get("isGuest")
+    ):
+        return
+
+    registered_users = [
+        existing_user for existing_user in DATA["users"]
+        if existing_user.get("role") == "user" and not existing_user.get("isGuest")
+    ]
+
+    if len(registered_users) != 1 or registered_users[0].get("id") != user.get("id"):
+        return
+
+    claimed_any = False
+
+    for scan in SCAN_HISTORY:
+        owner_id = scan.get("user_id") or scan.get("ownerUserId", PUBLIC_GUEST_ID)
+        if owner_id != PUBLIC_GUEST_ID:
+            continue
+
+        scan["user_id"] = user.get("id")
+        scan["ownerUserId"] = user.get("id")
+        scan["ownerUserName"] = user.get("name")
+        claimed_any = True
+
+    for alert in ALERTS:
+        owner_id = alert.get("user_id") or alert.get("ownerUserId", PUBLIC_GUEST_ID)
+        if owner_id != PUBLIC_GUEST_ID:
+            continue
+
+        alert["user_id"] = user.get("id")
+        alert["ownerUserId"] = user.get("id")
+        alert["ownerUserName"] = user.get("name")
+        claimed_any = True
+
+    if claimed_any:
+        persist_state()
+
+
 def sync_auth_tokens():
     AUTH_TOKENS.clear()
 
@@ -209,6 +296,16 @@ def persist_state():
         with open(temp_file, "w", encoding="utf-8") as data_file:
             json.dump(DATA, data_file, indent=2)
         os.replace(temp_file, DATA_FILE)
+
+
+def claim_public_guest_scans_for_single_user():
+    registered_users = [
+        existing_user for existing_user in DATA["users"]
+        if existing_user.get("role") == "user" and not existing_user.get("isGuest")
+    ]
+
+    if len(registered_users) == 1:
+        claim_public_guest_scans(public_user(registered_users[0]))
 
 
 def hash_password(password, salt=None):
@@ -256,7 +353,9 @@ def get_authenticated_user():
     if not session:
         return None
 
-    return public_user(find_user_by_id(session.get("userId")))
+    user = public_user(find_user_by_id(session.get("userId")))
+    claim_public_guest_scans(user)
+    return user
 
 
 def get_scan_user():
@@ -267,6 +366,7 @@ def is_admin(user):
     return bool(user and user.get("role") == "admin")
 
 
+claim_public_guest_scans_for_single_user()
 sync_auth_tokens()
 persist_state()
 
@@ -575,16 +675,12 @@ def user_url_counts():
     counts = {}
 
     for scan in SCAN_HISTORY:
-        owner_id = scan.get("ownerUserId", PUBLIC_GUEST_ID)
+        owner_id = scan.get("user_id") or scan.get("ownerUserId", PUBLIC_GUEST_ID)
         owner_name = scan.get("ownerUserName") or "Guest Browser"
         summary = counts.setdefault(
             owner_id,
             {
-                "userId": owner_id,
                 "name": owner_name,
-                "email": "",
-                "role": "guest",
-                "isGuest": owner_id.startswith("guest"),
                 "urlsScanned": 0,
                 "totalScans": 0,
                 "lastScannedAt": None
@@ -594,10 +690,7 @@ def user_url_counts():
         user = find_user_by_id(owner_id)
         if user:
             summary.update({
-                "name": user.get("name", summary["name"]),
-                "email": user.get("email", ""),
-                "role": user.get("role", summary["role"]),
-                "isGuest": bool(user.get("isGuest", False))
+                "name": user.get("name", summary["name"])
             })
 
         summary["totalScans"] += 1
@@ -613,24 +706,20 @@ def user_url_counts():
             summary["lastScannedAt"] = scanned_at
 
     for user in DATA["users"]:
-        if user.get("role") == "admin":
+        if user.get("role") == "admin" or user.get("id") == PUBLIC_GUEST_ID:
             continue
 
         counts.setdefault(
             user.get("id"),
             {
-                "userId": user.get("id"),
                 "name": user.get("name", "User"),
-                "email": user.get("email", ""),
-                "role": user.get("role", "user"),
-                "isGuest": bool(user.get("isGuest", False)),
                 "urlsScanned": 0,
                 "totalScans": 0,
                 "lastScannedAt": None
             }
         )
 
-    return sorted(
+    sorted_counts = sorted(
         counts.values(),
         key=lambda item: (
             item["urlsScanned"],
@@ -639,6 +728,14 @@ def user_url_counts():
         ),
         reverse=True
     )
+
+    return [
+        {
+            "name": item["name"],
+            "urlsScanned": item["urlsScanned"]
+        }
+        for item in sorted_counts
+    ]
 
 
 def dashboard_payload(user=None):
@@ -726,7 +823,7 @@ def dashboard_payload(user=None):
         "alerts": alerts[:8],
         "history": visible_history,
         "blacklist": list(BLACKLIST) if admin_view else [],
-        "userUrlCounts": []
+        "userUrlCounts": user_url_counts() if admin_view else []
     }
 
 

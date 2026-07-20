@@ -85,7 +85,8 @@ const fallbackDashboard = {
   attackTypes: [],
   alerts: [],
   history: [],
-  blacklist: []
+  blacklist: [],
+  userUrlCounts: []
 };
 
 const navItems = [
@@ -203,8 +204,36 @@ function PageHeader({ title, description, action }) {
   );
 }
 
-function StatCard({ label, value, detail, tone, icon }) {
+function StatCard({ label, value, detail, tone, icon, onClick }) {
   const CardIcon = icon;
+  const content = (
+    <>
+      <IconBadge tone={tone}>
+        <CardIcon />
+      </IconBadge>
+      <div className="stat-copy">
+        <strong>{formatNumber(value)}</strong>
+        <span>{label}</span>
+        <small>{detail}</small>
+      </div>
+    </>
+  );
+
+  if (onClick) {
+    return (
+      <motion.button
+        className={`stat-card ${tone} clickable`}
+        type="button"
+        onClick={onClick}
+        initial={{ opacity: 0, y: 8 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.2 }}
+        whileHover={{ y: -2 }}
+      >
+        {content}
+      </motion.button>
+    );
+  }
 
   return (
     <motion.article
@@ -214,14 +243,7 @@ function StatCard({ label, value, detail, tone, icon }) {
       transition={{ duration: 0.2 }}
       whileHover={{ y: -2 }}
     >
-      <IconBadge tone={tone}>
-        <CardIcon />
-      </IconBadge>
-      <div className="stat-copy">
-        <strong>{formatNumber(value)}</strong>
-        <span>{label}</span>
-        <small>{detail}</small>
-      </div>
+      {content}
     </motion.article>
   );
 }
@@ -825,6 +847,11 @@ function SystemStatus({ modelMetrics, stats }) {
 }
 
 function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
+  const dailyData = dashboard.dailyScans || fallbackDashboard.dailyScans;
+  const monthlyData = dashboard.monthlyScans || fallbackDashboard.monthlyScans;
+  const detectionData = dashboard.detectionTrends || fallbackDashboard.detectionTrends;
+  const phishingDomains = dashboard.topPhishingDomains || fallbackDashboard.topPhishingDomains;
+
   return (
     <>
       <section className="stat-grid">
@@ -835,7 +862,7 @@ function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
 
       <section className="analytics-grid">
         <Panel
-          title={isAdmin ? "Daily Scans" : "Threats Over Time"}
+          title="Daily Scans"
           action={
             <label className="compact-select">
               <CalendarDays />
@@ -849,11 +876,9 @@ function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
           className="wide-panel"
         >
           <MiniLineChart
-            data={isAdmin
-              ? dashboard.dailyScans || fallbackDashboard.dailyScans
-              : dashboard.threatsOverTime || fallbackDashboard.threatsOverTime}
-            dataKey={isAdmin ? "scans" : "threats"}
-            color={isAdmin ? "#3b82f6" : "#ef4444"}
+            data={dailyData}
+            dataKey="scans"
+            color="#3b82f6"
           />
         </Panel>
 
@@ -861,28 +886,20 @@ function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
           <DistributionChart distribution={dashboard.distribution || fallbackDashboard.distribution} />
         </Panel>
 
-        {isAdmin ? (
-          <>
-            <Panel title="Monthly Scans">
-              <MiniLineChart
-                data={dashboard.monthlyScans || fallbackDashboard.monthlyScans}
-                dataKey="scans"
-                xKey="month"
-                color="#8b5cf6"
-              />
-            </Panel>
-            <Panel title="Top Phishing Domains">
-              <AttackBarChart data={dashboard.topPhishingDomains || fallbackDashboard.topPhishingDomains} />
-            </Panel>
-            <Panel title="Detection Trends" className="wide-panel">
-              <DetectionTrendChart data={dashboard.detectionTrends || fallbackDashboard.detectionTrends} />
-            </Panel>
-          </>
-        ) : (
-          <Panel title="Attack Type Distribution">
-            <AttackBarChart data={dashboard.attackTypes || fallbackDashboard.attackTypes} />
-          </Panel>
-        )}
+        <Panel title="Monthly Scans">
+          <MiniLineChart
+            data={monthlyData}
+            dataKey="scans"
+            xKey="month"
+            color="#8b5cf6"
+          />
+        </Panel>
+        <Panel title="Top Phishing Domains">
+          <AttackBarChart data={phishingDomains} />
+        </Panel>
+        <Panel title="Detection Trends" className="wide-panel">
+          <DetectionTrendChart data={detectionData} />
+        </Panel>
 
         <AlertsPanel
           alerts={dashboard.alerts || fallbackDashboard.alerts}
@@ -895,8 +912,8 @@ function DashboardView({ cards, dashboard, result, onNavigate, isAdmin }) {
         <MultilayerAnalysis result={result} />
         <ScanTable
           history={dashboard.history || fallbackDashboard.history}
-          title={isAdmin ? "Global Scan History" : "Recent Scans / History"}
-          limit={isAdmin ? 50 : 7}
+          title={isAdmin ? "Global Scan History" : "My Scan History"}
+          limit={isAdmin ? 50 : 12}
         />
       </section>
     </>
@@ -1099,6 +1116,42 @@ function HistoryView({ history }) {
         description="Search and filter URL and email analysis records."
       />
       <ScanTable history={history} title="All Scan Records" limit={50} />
+    </div>
+  );
+}
+
+function AdminUsersView({ counts, onBack }) {
+  const rows = counts || [];
+
+  return (
+    <div className="view-page">
+      <PageHeader
+        title="User URL Counts"
+        description="Username-level URL scan totals without exposing scanned URLs."
+        action={
+          <button className="primary-button icon-text" onClick={onBack}>
+            <LayoutDashboard />
+            Dashboard
+          </button>
+        }
+      />
+      <Panel title={`Users (${rows.length})`}>
+        <div className="user-count-table">
+          <div className="user-count-head">
+            <span>Username</span>
+            <span>URLs Scanned</span>
+          </div>
+          {rows.map((row, index) => (
+            <div className="user-count-row" key={`${row.name || "user"}-${index}`}>
+              <strong>{row.name || "User"}</strong>
+              <b>{formatNumber(row.urlsScanned)}</b>
+            </div>
+          ))}
+          {rows.length === 0 && (
+            <div className="empty-state">No user URL counts recorded yet.</div>
+          )}
+        </div>
+      </Panel>
     </div>
   );
 }
@@ -1595,9 +1648,10 @@ function App() {
         {
           label: "Total Users",
           value: stats.totalUsers,
-          detail: "Registered and guest accounts",
+          detail: "Click to view URL counts",
           tone: "blue",
-          icon: Users
+          icon: Users,
+          onClick: () => setActiveView("Admin Users")
         },
         {
           label: "Total URLs Scanned",
@@ -1646,39 +1700,46 @@ function App() {
 
     return [
       {
-        label: "Total Threats Detected",
-        value: stats.totalThreats,
-        detail: `${formatNumber(stats.totalScans)} recorded scans`,
-        tone: "red",
-        icon: ShieldAlert
-      },
-      {
-        label: "Emails Scanned",
-        value: stats.emailsScanned,
-        detail: "Recorded email analyses",
-        tone: "blue",
-        icon: Mail
-      },
-      {
-        label: "URLs Analyzed",
-        value: stats.urlsAnalyzed,
-        detail: "Recorded URL analyses",
+        label: "Total URLs Scanned",
+        value: stats.totalUrlsScanned ?? stats.urlsAnalyzed,
+        detail: `${formatNumber(stats.totalScans)} saved scans`,
         tone: "purple",
         icon: Globe2
       },
       {
-        label: "Suspicious Cases",
-        value: stats.suspiciousCases,
-        detail: "Measured from scans",
+        label: "Safe URLs",
+        value: stats.safeUrls ?? stats.safeResults,
+        detail: "Only your safe URL scans",
+        tone: "green",
+        icon: ShieldCheck
+      },
+      {
+        label: "Suspicious URLs",
+        value: stats.suspiciousUrls ?? stats.suspiciousCases,
+        detail: "Only your suspicious scans",
         tone: "amber",
         icon: AlertTriangle
       },
       {
-        label: "Safe Results",
-        value: stats.safeResults,
-        detail: "Measured from scans",
-        tone: "green",
-        icon: ShieldCheck
+        label: "Dangerous URLs",
+        value: stats.dangerousUrls,
+        detail: "Only your dangerous scans",
+        tone: "red",
+        icon: ShieldAlert
+      },
+      {
+        label: "Today's Scans",
+        value: stats.todaysScans,
+        detail: "Your scans today",
+        tone: "blue",
+        icon: CalendarDays
+      },
+      {
+        label: "Weekly Scans",
+        value: stats.weeklyScans,
+        detail: "Your last seven days",
+        tone: "purple",
+        icon: Activity
       }
     ];
   }, [dashboard, isAdmin]);
@@ -1714,6 +1775,27 @@ function App() {
 
   useEffect(() => {
     loadDashboard();
+  }, [loadDashboard]);
+
+  useEffect(() => {
+    const refreshDashboard = () => {
+      loadDashboard();
+    };
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        loadDashboard();
+      }
+    };
+    const dashboardTimer = window.setInterval(refreshDashboard, 5000);
+
+    window.addEventListener("focus", refreshDashboard);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+
+    return () => {
+      window.clearInterval(dashboardTimer);
+      window.removeEventListener("focus", refreshDashboard);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
   }, [loadDashboard]);
 
   useEffect(() => {
@@ -1757,10 +1839,12 @@ function App() {
   }, [activeView]);
 
   useEffect(() => {
-    if (!visibleNavItems.some((item) => item.label === activeView)) {
+    const isHiddenAdminView = isAdmin && activeView === "Admin Users";
+
+    if (!isHiddenAdminView && !visibleNavItems.some((item) => item.label === activeView)) {
       setActiveView("Dashboard");
     }
-  }, [activeView, visibleNavItems]);
+  }, [activeView, isAdmin, visibleNavItems]);
 
   const persistSession = (token, user) => {
     localStorage.setItem("mapis-token", token);
@@ -1849,6 +1933,7 @@ function App() {
       if (!response.ok) throw new Error(data.error || "Login failed");
 
       persistSession(data.token, data.user);
+      await loadDashboard(data.token);
       setLoginOpen(false);
       setProfileOpen(false);
       toast.success(data.user?.role === "admin" ? "Administrator signed in" : "Signed in");
@@ -1872,6 +1957,7 @@ function App() {
       if (!response.ok) throw new Error(data.error || "Signup failed");
 
       persistSession(data.token, data.user);
+      await loadDashboard(data.token);
       setLoginOpen(false);
       setProfileOpen(false);
       toast.success("Account created");
@@ -1886,7 +1972,8 @@ function App() {
     setLoginLoading(true);
     setLoginError("");
     try {
-      await startGuestSession();
+      const guestToken = await startGuestSession();
+      await loadDashboard(guestToken);
       setLoginOpen(false);
       setProfileOpen(false);
     } catch (guestError) {
@@ -1972,6 +2059,13 @@ function App() {
         return <AlertsView alerts={dashboard.alerts || fallbackDashboard.alerts} />;
       case "History / Logs":
         return <HistoryView history={dashboard.history || fallbackDashboard.history} />;
+      case "Admin Users":
+        return isAdmin ? (
+          <AdminUsersView
+            counts={dashboard.userUrlCounts || fallbackDashboard.userUrlCounts}
+            onBack={() => setActiveView("Dashboard")}
+          />
+        ) : null;
       case "Blacklist Manager":
         return isAdmin ? (
           <BlacklistView
